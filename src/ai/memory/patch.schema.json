@@ -1,0 +1,33 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://oughtgather.invalid/schemas/editorial-memory-patch-v1.json",
+  "title": "OughtGather editorial memory patch v1",
+  "type": "object",
+  "required": ["schema_version", "patch_id", "operation"],
+  "properties": {
+    "schema_version": {"const": 1},
+    "patch_id": {"type": "string", "minLength": 1, "maxLength": 128},
+    "operation": {"enum": ["add", "supersede", "deactivate"]},
+    "target_id": {"type": ["string", "null"], "minLength": 1},
+    "entry": {
+      "type": "object",
+      "required": ["kind", "strength", "instruction", "original_feedback"],
+      "properties": {
+        "kind": {"enum": ["preference", "requirement", "positive_example", "negative_example", "correction"]},
+        "strength": {"enum": ["hard", "soft"]},
+        "instruction": {"type": "string", "minLength": 1, "maxLength": 4000},
+        "original_feedback": {"type": "string", "minLength": 1, "maxLength": 4000},
+        "scope": {"type": "array", "maxItems": 50, "items": {"type": "string", "maxLength": 100}},
+        "signals": {"type": "object", "properties": {
+          "prefer": {"type": "array", "maxItems": 50, "items": {"type": "string", "maxLength": 100}},
+          "deprioritize": {"type": "array", "maxItems": 50, "items": {"type": "string", "maxLength": 100}}
+        }},
+        "reference_articles": {"type": "array", "maxItems": 50, "items": {"type": "object", "additionalProperties": {"type": "string", "maxLength": 2000}}}
+      }
+    }
+  },
+  "allOf": [
+    {"if": {"properties": {"operation": {"enum": ["supersede", "deactivate"]}}}, "then": {"required": ["target_id"]}},
+    {"if": {"properties": {"operation": {"enum": ["add", "supersede"]}}}, "then": {"required": ["entry"]}}
+  ]
+}

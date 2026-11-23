@@ -1,0 +1,46 @@
+name: Apply Editorial Memory Patch
+on:
+  workflow_dispatch:
+    inputs:
+      validate_only:
+        type: boolean
+        default: true
+        description: Validate patch and existing memory without updating
+      authorize_apply:
+        type: boolean
+        default: false
+        description: Authorize writing encrypted editorial memory
+concurrency:
+  group: oughtgather-editorial-memory
+  cancel-in-progress: false
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.11'
+      - run: pip install -r requirements.txt
+      - name: Validate or apply patch
+        env:
+          AI_MEMORY_PATCH: ${{ secrets.AI_MEMORY_PATCH }}
+          AI_MEMORY_KEY: ${{ secrets.AI_MEMORY_KEY }}
+          AI_MEMORY_REMOTE_DIR: ${{ vars.AI_MEMORY_REMOTE_DIR }}
+          WEBDAV_ENABLED: "true"
+          WEBDAV_REMOTE_PATH: ${{ secrets.WEBDAV_REMOTE_PATH }}
+          WEBDAV_URL: ${{ secrets.WEBDAV_URL }}
+          WEBDAV_USERNAME: ${{ secrets.WEBDAV_USERNAME }}
+          WEBDAV_PASSWORD: ${{ secrets.WEBDAV_PASSWORD }}
+          VALIDATE_ONLY: ${{ inputs.validate_only }}
+          AUTHORIZE_APPLY: ${{ inputs.authorize_apply }}
+        run: |
+          if [ "$VALIDATE_ONLY" = "true" ]; then
+            python -m src.ai.memory apply --validate-only
+          elif [ "$AUTHORIZE_APPLY" = "true" ]; then
+            python -m src.ai.memory apply
+          else
+            echo 'Apply not authorized' >&2
+            exit 1
+          fi
