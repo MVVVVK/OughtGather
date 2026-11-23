@@ -65,3 +65,14 @@ def test_redirect_is_not_followed(monkeypatch):
     monkeypatch.setattr(probe, 'fetch', fake_fetch)
     result = probe.probe({'name': 'example', 'url': 'https://example.com/feed'}, NOW)
     assert result['status'] == 'redirect_not_followed' and len(calls) == 2
+
+
+def test_collector_can_fill_200_slots_with_media_hints_before_quality_review():
+    from src.ai.candidates import CandidateCollector
+    collector = CandidateCollector()
+    candidates = [{'url': f'https://example.com/{i}', 'title': f'Candidate {i}',
+                   '_entry': {'summary': 'RSS excerpt'}, '_media': i < 200} for i in range(201)]
+    collector.collect('example', candidates, 'example')
+    selected = collector.snapshot(1000000)[:200]
+    assert len(selected) == 200
+    assert sum(row['media_hint'] for row in selected) >= 199
