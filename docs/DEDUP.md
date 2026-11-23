@@ -82,3 +82,11 @@ tracker.save()
 - `src/dedup/tracker.py`：快照存储、查询、原子保存。
 - `src/main.py`：抓取时暂存快照、结果处理和 Fresh Start 流程。
 - `tests/test_dedup_tracker.py`：去重快照及主流程相关测试。
+
+## Actions 缓存与手动测试
+
+Daily Gather 与 Fresh Start 共用串行组，使用 `dedup-v2-<run_id>-<run_attempt>` 不可变键；Daily 通过前缀恢复最新创建的 v2 快照，成功后显式保存新键，首次迁移时回退到旧 `dedup-` 前缀。Fresh Start 成功后显式保存新快照，任一来源失败时不保存。重复运行同一 workflow 时 `run_attempt` 会变化，避免命中已有键而无法更新。缓存可能被 GitHub 淘汰，迁移后勿手动删除最新缓存；一旦全部被淘汰只能重新建立快照。
+
+GitHub 缓存受分支作用域限制：正式 Daily Gather 和 Fresh Start 必须在默认分支运行；从开发分支触发的缓存不能用于更新默认分支的历史。使用 Actions 页面选择 `main`，等待 Fresh Start 成功且保存缓存步骤成功后再运行 Daily Gather，并检查恢复步骤显示的缓存键。普通每日运行不会清空记录。
+
+Daily Gather 手动触发可勾选 `test_mode`（本地 `python src/main.py --test-mode`），使用空的临时去重文件，不保存 Actions 去重缓存，不发送邮件或 WebDAV；要限制测试规模，请在测试配置的来源 `metadata.limit` 或全局 `limit` 设置较小数值。该模式仍会生成 EPUB 和质量报告。

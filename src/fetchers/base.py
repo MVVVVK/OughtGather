@@ -55,6 +55,7 @@ class FetchResult:
     error: Optional[str] = None
     error_count: int = 0
     source_title: Optional[str] = None  # 内容源的显示名称（如 RSS feed 标题）
+    quality_report: List[Dict[str, Any]] = field(default_factory=list)
 
     def add_error(self, error_msg: str):
         """添加错误信息"""
@@ -681,7 +682,7 @@ class BaseFetcher(ABC):
             return "", ""
 
         try:
-            response = self._make_request(url, allow_browser_fallback=True)
+            response = self._make_request(url)
             raw_html = response.text
 
             # 使用 trafilatura 提取正文

@@ -9,6 +9,8 @@ import feedparser
 from src.config import ContentSource
 from src.fetchers.base import BaseFetcher, FetchResult, Article
 from src.utils.helpers import format_date
+from src.fetchers.quality import inspect, MEDIA
+from bs4 import BeautifulSoup
 
 
 class RSSFetcher(BaseFetcher):
@@ -16,6 +18,7 @@ class RSSFetcher(BaseFetcher):
 
     type_name = "rss"
     supports_two_phase = True
+    fills_candidate_limit = True
     src_placeholder = "RSS/Atom URL, 例如: https://hnrss.org/frontpage"
     config_schema = {
         "metadata.full_text": {
@@ -72,21 +75,25 @@ class RSSFetcher(BaseFetcher):
             # 限制条目数量（默认使用全局限制，可通过 metadata.limit 覆盖）
             metadata = self.source.metadata or {}
             limit = min(int(metadata.get("limit", self.global_limit)), len(feed.entries))
-            entries = feed.entries[:limit]
+            entries = feed.entries
 
             if limit < len(feed.entries):
                 self.logger.info(f"Limiting RSS entries to {limit} (feed has {len(feed.entries)})")
 
             # 遍历所有条目
+            self._quality_report = []
             for entry in entries:
                 try:
                     article = self._parse_entry(entry)
                     if article and not self._should_delete(article.title):
                         result.articles.append(article)
+                        if len(result.articles) >= limit:
+                            break
                 except Exception as e:
                     self.logger.error(f"Failed to parse entry: {e}")
                     result.add_error(f"Failed to parse entry: {e}")
 
+            result.quality_report = self._quality_report
             # 只要成功解析了至少一些条目，就认为抓取成功
             if result.articles:
                 result.success = True
@@ -170,7 +177,10 @@ class RSSFetcher(BaseFetcher):
 
         self.logger.info(f"[fetch_items] 开始抓取 {len(candidates)} 篇新文章")
 
+        self._quality_report = []
         for cand in candidates:
+            if len(result.articles) >= self.get_limit():
+                break
             try:
                 entry = cand.get("_entry", {})
                 article = self._parse_entry(entry)
@@ -179,9 +189,11 @@ class RSSFetcher(BaseFetcher):
             except Exception as e:
                 self.logger.error(f"[fetch_items] 解析条目失败: {e}")
                 result.add_error(f"Failed to parse entry: {e}")
+                self._quality_report.append({"title": cand.get("title", ""), "source": self.source.title or self.source.src, "url": cand.get("url", ""), "language": None, "method": "none", "text_length": 0, "status": "failed", "reason": "entry_parse_failed"})
 
         if result.articles:
             result.success = True
+        result.quality_report = self._quality_report
 
         return result
 
@@ -201,47 +213,78 @@ class RSSFetcher(BaseFetcher):
         author = entry.get("author", "")
         published = format_date(entry.get("published", ""))
 
-        # 提取内容
         metadata = self.source.metadata or {}
-        full_text = metadata.get("full_text", "N")
-        if full_text == "Y":
-            # 抓取完整正文（使用 trafilatura）
-            content, raw_html = self._fetch_full_text(link)
-            if not content:
-                self.logger.warning(
-                    f"Full text unavailable for {link}; falling back to RSS summary"
-                )
-                content = self._get_summary(entry)
-            image_html = raw_html or content
-            # 从原始 HTML 提取图片 URL（trafilatura 通常会剥离 <img>）
-            body_images = self._extract_images(image_html, base_url=link)
-            # 额外从 og:image / twitter:image / <link rel="image_src"> 提取封面图，
-            # 置于列表首位（SPA 类网站如 Scientific American 的 lead image
-            # 可能不在 trafilatura 识别的正文区域内，依赖 meta 标签才能捕获）
-            og_images = self._extract_og_image(raw_html, base_url=link)
-            # 合并：og_images 在前，body_images 追加（去重）
-            seen = set(og_images)
-            images = og_images + [u for u in body_images if u not in seen]
+        reasons = []
+        content = ""
+        raw_html = ""
+        status = ""
+        method = ""
+        if metadata.get("full_text", "N") == "Y":
+            extracted, raw_html = self._fetch_full_text(link)
+            ok, reason, _ = inspect(extracted, full=True)
+            if not ok and reason == "empty_content" and raw_html:
+                _, raw_reason, _ = inspect(raw_html)
+                if raw_reason not in ("", "empty_content"):
+                    reason = raw_reason
+            if ok:
+                content, status, method = extracted, "full_text", "web"
+            else:
+                reasons.append("web:" + reason)
         else:
-            # 使用 RSS 摘要
-            content = self._get_summary(entry)
-            images = self._extract_images(content, base_url=link)
+            reasons.append("web:disabled")
 
+        rss_content = entry.get("content", [])
+        rss_content = rss_content[0].get("value", "") if rss_content else ""
+        if not content and rss_content:
+            ok, reason, _ = inspect(rss_content, full=True)
+            if ok:
+                content, status, method = rss_content, "rss_content", "rss_content"
+            else:
+                reasons.append("rss_content:" + reason)
+
+        summary = entry.get("summary", entry.get("description", "")) or rss_content or ""
         if not content:
-            self.logger.warning(f"No content for entry: {title}")
-            return None
+            ok, reason, _ = inspect(summary)
+            if ok:
+                content, status, method = summary, "summary", "rss_summary"
+            else:
+                reasons.append("summary:" + reason)
 
-        return Article(
-            title=title,
-            content=content,
-            url=link,
-            author=author,
-            published_date=published,
-            images=images,
-            metadata={
-                "categories": entry.get("tags", []),
-            }
+        media = bool(MEDIA.search(title)) or any(
+            str(item.get("type", "")).startswith(("video/", "audio/"))
+            for item in entry.get("enclosures", [])
         )
+        if media and status not in ("full_text", "rss_content"):
+            status, method, content = "rejected", "none", ""
+            reasons.append("media_without_independent_text")
+        elif not content:
+            status, method = "failed", "metadata"
+            content = "<p>Article text unavailable / Texte indisponible.</p>"
+        _, _, length = inspect(content)
+        if status == "summary":
+            content = '<p><strong>Summary / Résumé</strong></p>' + content
+        elif status == "failed":
+            content = '<p><strong>Text unavailable / Texte indisponible</strong></p>'
+
+        language = entry.get("language", "") or ""
+        if not language and raw_html:
+            html_tag = BeautifulSoup(raw_html, "html.parser").find("html")
+            language = html_tag.get("lang", "") if html_tag else ""
+        report = {"title": title, "source": self.source.title or self.source.src,
+                  "url": link, "language": language or None, "method": method,
+                  "text_length": length if status not in ("failed", "rejected") else 0,
+                  "status": status, "reason": "; ".join(reasons)}
+        if hasattr(self, "_quality_report"):
+            self._quality_report.append(report)
+        if status == "rejected":
+            return None
+        image_html = raw_html if status == "full_text" else content
+        body_images = self._extract_images(image_html, base_url=link)
+        og_images = self._extract_og_image(raw_html, base_url=link) if status == "full_text" else []
+        images = og_images + [u for u in body_images if u not in set(og_images)]
+        return Article(title=title, content=content, url=link, author=author,
+                       published_date=published, images=images,
+                       metadata={"categories": entry.get("tags", []), "quality": report})
 
     def _get_summary(self, entry: dict) -> str:
         """
