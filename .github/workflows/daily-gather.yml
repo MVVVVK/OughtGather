@@ -9,6 +9,10 @@ on:
         description: "Reprocess articles with isolated dedup history and no delivery"
         type: boolean
         default: false
+      upload_plaintext_epub:
+        description: "Explicitly upload a plaintext EPUB artifact (visible to artifact readers)"
+        type: boolean
+        default: false
       retry_failed:
         description: "Reset failed-article retry counters (published history is retained)"
         type: boolean
@@ -181,8 +185,8 @@ jobs:
           retention-days: 7
 
       - name: Upload EPUB artifact
-        # 仅在手动触发时上传 EPUB，自动触发（外部触发器或 cron 定时）不上传
-        if: github.event_name == 'workflow_dispatch'
+        # 明文 EPUB 必须由手动运行者明确开启。
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.upload_plaintext_epub }}
         uses: actions/upload-artifact@v6
         with:
           name: epub-files

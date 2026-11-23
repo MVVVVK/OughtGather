@@ -49,7 +49,7 @@ Ought Gather is a Python-based automated information aggregation tool. It collec
 
 ## GitHub Actions Deployment (Recommended)
 
-The workflow file is located at [.github/workflows/daily-gather.yml](.github/workflows/daily-gather.yml). It runs daily on a schedule or can be triggered manually. The workflow sets up dependencies, constructs `config.json`, executes `python src/main.py`, commits the deduplication ledger, and retains the generated EPUB as an artifact for 7 days.
+The workflow file is located at [.github/workflows/daily-gather.yml](.github/workflows/daily-gather.yml). It runs daily on a schedule or can be triggered manually. The workflow sets up dependencies, constructs `config.json`, executes `python src/main.py`, saves the deduplication ledger. Plaintext EPUB artifacts are disabled by default and retained for seven days only when explicitly enabled for a manual run.
 
 ### Deployment Steps
 
@@ -71,7 +71,7 @@ Actions -> Daily Gather -> Run workflow
 
 Once successful:
 
-- The EPUB is created in `output/` and uploaded as an artifact (retained for 7 days).
+- The EPUB is created in `output/`; a plaintext artifact is uploaded for seven days only when `upload_plaintext_epub` is explicitly enabled for a manual run.
 - The EPUB is sent via email to your `KINDLE_EMAIL`.
 - `data/fetched_urls.txt` is updated in the GitHub Actions cache for deduplication on the next run.
 
@@ -83,13 +83,13 @@ See the [Secrets Configuration](#secrets-configuration) section below to configu
 
 ### Customizing Run Schedules
 
-Daily Gather is scheduled for 06:30 Beijing time. Cloudflare Workers are optional; enabling both triggers may start two runs, with source deduplication still applied. Redeploy an existing Worker to change its schedule. See [WebDAV delivery](docs/WEBDAV_DELIVERY.md) for secure retry and setup.
+Daily Gather is scheduled for 06:30 Beijing time. Enable only one daily scheduler: either GitHub Actions or the optional Cloudflare Worker. Enabling both may start two runs. Redeploy an existing Worker to change its schedule. See [WebDAV delivery](docs/WEBDAV_DELIVERY.md) for secure retry and setup.
 
 ### Change Time Zone
 
 Edit the `TZ: Asia/Shanghai` field in the workflow file [.github/workflows/daily-gather.yml](.github/workflows/daily-gather.yml). This affects the article times shown in the EPUB.
 
-#### Configure External Trigger (Recommended)
+#### Configure External Trigger (Optional; choose one scheduler)
 
 **Step 1: Modify Trigger Cron**
 

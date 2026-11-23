@@ -58,8 +58,16 @@ class FakeDAV:
             return httpx.Response(201)
         if request.method == 'DELETE':
             self.files.pop(path, None)
+            self.dirs.discard(path.rstrip('/'))
             return httpx.Response(204)
         if request.method == 'PROPFIND':
+            if request.headers.get('Depth') == '0':
+                if path.rstrip('/') not in self.dirs:
+                    return httpx.Response(404)
+                body = ('<d:multistatus xmlns:d="DAV:"><d:response><d:href>' + path +
+                        '</d:href><d:propstat><d:status>HTTP/1.1 200 OK</d:status>'
+                        '</d:propstat></d:response></d:multistatus>')
+                return httpx.Response(207, content=body.encode())
             children = ''.join('<d:response><d:href>' + name + '</d:href></d:response>'
                                for name in self.files if name.startswith(path))
             return httpx.Response(207, content=('<d:multistatus xmlns:d="DAV:">' + children + '</d:multistatus>').encode())

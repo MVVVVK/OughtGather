@@ -2,7 +2,7 @@
 
 ## 工作方式
 
-Daily Gather 定时为 UTC 22:30，即北京时间每天 06:30。GitHub Actions 可能因排队延迟；它不是实时闹钟。定时运行不再因之前 18 小时内存在外部触发而跳过。外部触发、Fresh Start 和补传共用原有并发组；RSS 仍遵循 PR #3 的出版去重规则。短时间内重复触发时，已入选文章不会再次被作为新文章出版，但两次运行之间出现的新文章仍可能生成新一期。仓库中的 Cloudflare Worker 配置也改为 06:30；已经部署的 Worker 需要重新部署或手动调整，才能改变其现有定时。
+Daily Gather 定时为 UTC 22:30，即北京时间每天 06:30。GitHub Actions 可能因排队延迟；它不是实时闹钟。定时运行不再因之前 18 小时内存在外部触发而跳过。外部触发、Fresh Start 和补传共用原有并发组；RSS 仍遵循 PR #3 的出版去重规则。**建议只启用一个每日定时触发器**：GitHub Actions 或 Cloudflare Worker 二选一。若启用 Worker，请从 `daily-gather.yml` 删除或注释 `on.schedule`（保留工作流启用及 `repository_dispatch`）；若使用 Actions 定时，请在 Cloudflare 禁用 Worker 的 Cron Trigger。两者同时启用可能重复运行，两次之间的新文章仍可能生成新一期。仓库中的 Cloudflare Worker 配置也改为 06:30；已经部署的 Worker 需要重新部署或手动调整，才能改变其现有定时。
 
 启用 WebDAV 后，先用独立密钥加密完整 EPUB 形成补传包，再尝试 WebDAV。远端目录下的 `archive/` 按北京时间生成带时间和 SHA-256 的文件名；原样补传使用同一文件名。成功上传后读取远端文件逐字节校验。`latest.epub` 先上传到同目录临时文件并校验，再通过 WebDAV `MOVE` 替换；覆盖前会保存并验证 `latest.previous.epub`。较旧期次的补传不会覆盖已有的较新期次。默认保留最近 30 个日历日的归档，仅删除本程序命名格式且超过期限的归档；`latest.epub`、`latest.previous.epub` 和其他文件不会被归档清理删除。清理失败记在投递状态中，不覆盖成功的投递结果。
 
@@ -32,7 +32,7 @@ Daily Gather 定时为 UTC 22:30，即北京时间每天 06:30。GitHub Actions 
 
 ## 状态、失败与补传
 
-每次启用 WebDAV 的投递在 `delivery-status` artifact 中记录状态、错误类别、归档标识及邮件结果。类别包括 `authentication`、`network`、`quota`、`verification`、`remote`、`redirect` 和 `configuration`。检查该状态及工作流日志；认证失败请检查应用密码和目录权限，网络失败可稍后重试，`verification` 或 `remote` 请核对服务端 WebDAV 能力。`cleanup_error` 表示归档清理失败，最新一期可能已经成功送达。
+每次启用 WebDAV 的投递在 `delivery-status` artifact 中记录状态、错误类别、归档标识及邮件结果。类别包括 `authentication`、`network`、`quota`、`verification`、`unsupported`、`remote`、`redirect` 和 `configuration`；不支持的操作及 HTTP 状态显示在 `error_detail` 或 `cleanup_warning` 中。检查该状态及工作流日志；认证失败请检查应用密码和目录权限，网络失败可稍后重试，`verification` 或 `remote` 请核对服务端 WebDAV 能力。`cleanup_error` 表示归档清理失败，最新一期可能已经成功送达。
 
 失败时，Actions 保存 `delivery-retry-<run_id>-<attempt>` artifact，内含经 AES-256-GCM 认证加密的 EPUB 和期次信息，密钥经 PBKDF2-HMAC-SHA256 派生；保留 30 天，过期后不能从 Actions 恢复。失败通知邮件不会包含密钥。密文仍应视为敏感资料，避免泄露密钥。该备份是短期恢复手段，不是永久备份；EPUB 已生成并按 PR #3 保存去重记录后，若加密包创建因磁盘错误失败、Actions runner 在上传 artifact 前被终止，或 GitHub artifact 服务不可用，也可能无法保存补传包。用户可另行维护私人备份。
 
@@ -45,4 +45,13 @@ Daily Gather 定时为 UTC 22:30，即北京时间每天 06:30。GitHub Actions 
 
 本地补传可先将密文放到受保护的本地文件，再通过环境变量安全提供密钥与 WebDAV 配置，运行 `python -m src.delivery --encrypted /path/to/delivery-retry.enc`。不要将密钥直接写进 shell 命令历史。
 
-`test_mode` 不上传 WebDAV、不发邮件、不生成补传包或修改正式去重缓存。现有手动 Daily Gather 仍会把生成的 EPUB 作为**明文、7 天有效**的 `epub-files` artifact 上传；公开仓库可访问该 artifact 的人可能看到内容，勿把它用于私人 EPUB 的永久备份。质量报告也包含来源和文章 URL，分享前应检查是否有敏感参数。
+`test_mode` 不上传 WebDAV、不发邮件、不生成补传包或修改正式去重缓存。`epub-files` 明文 artifact 默认关闭；只有手动 Daily Gather 明确勾选 `upload_plaintext_epub` 才会上传，保留 7 天。可访问该 artifact 的人可能看到内容，勿把它用于私人 EPUB 的永久备份。质量报告也包含来源和文章 URL，分享前应检查是否有敏感参数。
+
+
+## 独立的坚果云冒烟测试
+
+这是单独的测试程序，不会抓取 RSS、读取或修改去重记录、读取 `WEBDAV_REMOTE_PATH` 或访问 `latest.epub`。程序只接受 HTTPS 的 `https://dav.jianguoyun.com/dav/` 根地址；在根目录创建随机的 `oughtgather-smoke-<随机值>` 临时目录，用固定测试字节验证 MKCOL、PUT、GET、PROPFIND、MOVE（新建及覆盖）和 DELETE，然后删除本次创建的对象。不会进入正式 `DailyWorldBriefing` 目录。用户应先确认使用的坚果云账户和根目录，明确授权后才运行。
+
+合并后可手动运行 **Isolated WebDAV Smoke Test**，必须勾选 `authorize`。它只使用已有 `WEBDAV_URL`、`WEBDAV_USERNAME`、`WEBDAV_PASSWORD` Secrets，不使用正式目录配置或其他 Secrets。GitHub 通常要求手动工作流先存在于默认分支；合并前可以在检出 PR 分支后使用本地方式验证：通过安全的环境变量机制提供这三个值，再运行 `python -m src.uploader.webdav_smoke --authorize-isolated`。不要把密码写进命令行或终端历史。
+
+报告只显示操作、状态、随机测试目录名和清理错误，不显示认证信息、URL 或服务端响应正文。HTTP 405/501 会明确标记操作不受支持；失败后只尝试清理本次成功创建的测试目录和固定测试文件。如果 `cleanup_errors` 非空，请在坚果云**根目录**手动检查报告中对应的随机 `oughtgather-smoke-...` 目录并移除它；不要操作正式新闻目录。服务端不支持所需操作时不要启用正式投递。

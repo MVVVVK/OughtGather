@@ -37,6 +37,8 @@ class WebDavUploader:
                 code = response.status_code
                 if code in allowed:
                     return response
+                if code in (405, 501):
+                    raise DeliveryError('unsupported', f'{method} is unsupported (HTTP {code})')
                 if code in (401, 403):
                     raise DeliveryError('authentication', f'WebDAV HTTP {code}')
                 if code in (429, 500, 502, 503, 504):
@@ -65,9 +67,34 @@ class WebDavUploader:
         self.base = self.config.url.rstrip('/')
         for part in filter(None, parts):
             self.base += '/' + quote(part, safe='')
-            self._request('MKCOL', self.base, allowed=(201, 405))
+            self._ensure_collection(self.base)
         self.archive = self.base + '/archive'
-        self._request('MKCOL', self.archive, allowed=(201, 405))
+        self._ensure_collection(self.archive)
+
+    def _ensure_collection(self, url):
+        response = self._request('MKCOL', url, allowed=(201, 405))
+        if response.status_code == 405:
+            # 405 can mean an existing directory or an unsupported MKCOL.
+            # A successful Depth: 0 listing confirms an accessible collection.
+            try:
+                listing = self._request('PROPFIND', url + '/', headers={'Depth': '0'}, allowed=(207,))
+            except DeliveryError as exc:
+                if exc.category == 'remote' and '404' in str(exc):
+                    raise DeliveryError('unsupported', 'MKCOL unavailable or collection is absent') from exc
+                raise
+            try:
+                root = ElementTree.fromstring(listing.content)
+                expected = unquote(urlsplit(url).path).rstrip('/')
+                exists = any(
+                    unquote(urlsplit(item.findtext('{DAV:}href', '')).path).rstrip('/') == expected
+                    and any(re.search(r'\s2\d\d(?:\s|$)', status.text or '')
+                            for status in item.findall('.//{DAV:}status'))
+                    for item in root.findall('{DAV:}response')
+                )
+            except ElementTree.ParseError as exc:
+                raise DeliveryError('remote', 'Invalid PROPFIND collection response') from exc
+            if not exists:
+                raise DeliveryError('unsupported', 'MKCOL unavailable or collection is absent')
 
     def _read(self, url):
         response = self._request('GET', url, allowed=(200, 404))
@@ -84,8 +111,8 @@ class WebDavUploader:
         finally:
             try:
                 self._request('DELETE', temp, allowed=(200, 204, 404))
-            except DeliveryError:
-                pass
+            except DeliveryError as exc:
+                self._cleanup_warning = str(exc)
         if self._read(target) != content:
             raise DeliveryError('verification', 'WebDAV destination verification failed')
 
@@ -105,6 +132,7 @@ class WebDavUploader:
 
     def upload_epub(self, epub_path: str, edition: str = None) -> bool:
         self.last_error, self.last_result = None, {}
+        self._cleanup_warning = None
         if not self.config or not self.config.enabled:
             self.last_error = 'disabled'
             self.logger.info('WebDAV is not enabled, skip pushing.')
@@ -173,8 +201,9 @@ class WebDavUploader:
                         continue
                     except DeliveryError as exc:
                         cleanup_error = exc.category
+                        self._cleanup_warning = str(exc)
                         break
-                self.last_result = {'archive': edition, 'sha256': digest, 'latest_updated': update_latest, 'latest_edition': newest, 'cleanup_error': cleanup_error}
+                self.last_result = {'archive': edition, 'sha256': digest, 'latest_updated': update_latest, 'latest_edition': newest, 'cleanup_error': cleanup_error, 'cleanup_warning': self._cleanup_warning}
                 return True
             finally:
                 if owned:
@@ -188,6 +217,7 @@ class WebDavUploader:
             self.last_error = 'configuration'
         except DeliveryError as exc:
             self.last_error = exc.category
+            self.last_result = {'error_detail': str(exc)}
         except httpx.HTTPError:
             self.last_error = 'network'
         self.logger.error('WebDAV delivery failed (%s)', self.last_error)
