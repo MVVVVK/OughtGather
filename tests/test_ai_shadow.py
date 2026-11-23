@@ -290,3 +290,56 @@ def test_webdav_delivery_completes_before_provider_unavailable(tmp_path, monkeyp
     report = run(candidates, DeepSeekClient('x', transport=httpx.MockTransport(lambda req: httpx.Response(503))))
     assert report['status'] == 'degraded'
     assert (tmp_path / 'history').read_bytes() == before
+
+
+def test_cluster_ids_are_scoped_or_semantic_across_batches(monkeypatch):
+    monkeypatch.setenv('AI_MAX_BATCH_CANDIDATES', '2')
+    candidates = [candidate(i) for i in range(1, 5)]
+
+    def analyze_with(signature):
+        def handler(request):
+            payload = json.loads(request.content)
+            sent = json.loads(payload['messages'][1]['content'])['candidates']
+            results = []
+            for entry in sent:
+                row = item(entry['candidate_id'])
+                row['event_cluster'] = signature
+                results.append(row)
+            return httpx.Response(200, json=response(results))
+        return run(candidates, DeepSeekClient('x', transport=httpx.MockTransport(handler)))
+
+    local = analyze_with('event-1')
+    assert local['status'] == 'ok'
+    assert sorted(sorted(x['candidate_id'] for x in members) for members in local['event_clusters'].values()) == [['1', '2'], ['3', '4']]
+
+    semantic = analyze_with('harbor-council|adopts-budget|north-port|2026-02-03')
+    assert semantic['status'] == 'ok'
+    assert len(semantic['event_clusters']) == 1
+    assert {x['candidate_id'] for x in next(iter(semantic['event_clusters'].values()))} == {'1', '2', '3', '4'}
+    assert 'harbor-council' not in json.dumps(semantic)
+
+
+def test_cluster_signature_validation_and_normalization():
+    from src.ai.editor import cluster_id
+    assert cluster_id('Event-1', 0) != cluster_id('event-1', 2)
+    assert cluster_id('cluster-a', 0) != cluster_id('cluster-a', 2)
+    assert cluster_id('Harbor Council | adopts budget | North Port | 2026-02-03', 0) == cluster_id('harbor council|adopts budget|north port|2026-02-03', 2)
+    assert cluster_id('actor|action|place|date', 0) != cluster_id('actor|action|place|date', 2)
+    assert cluster_id('harbor|budget|north|2026-02-30', 0) != cluster_id('harbor|budget|north|2026-02-30', 2)
+    assert cluster_id('bad<script>', 0) == ''
+    assert cluster_id('x' * 101, 0) == ''
+
+
+def test_prompt_has_valid_json_example_and_requests_semantic_signature():
+    from src.ai.client import SYSTEM
+    sample = json.loads(SYSTEM.split('JSON example: ', 1)[1])
+    assert validate_batch(sample, {'id'})[0]['candidate_id'] == 'id'
+    assert 'actor|action|place|YYYY-MM-DD' in SYSTEM
+    assert 'event-1' in SYSTEM and 'batch-local' in SYSTEM
+
+
+def test_workflows_have_read_only_repository_permissions():
+    from pathlib import Path
+    for name in ('daily-gather.yml', 'apply-ai-memory.yml'):
+        content = Path('.github/workflows', name).read_text()
+        assert '\npermissions:\n  contents: read\n' in content

@@ -10,6 +10,9 @@ on:
         type: boolean
         default: false
         description: Authorize writing encrypted editorial memory
+permissions:
+  contents: read
+
 concurrency:
   group: oughtgather-editorial-memory
   cancel-in-progress: false

@@ -1,9 +1,12 @@
 """Offline-comparable shadow editor; no writes to the publication pipeline."""
+import hashlib
 import json
 import os
+import re
 import time
+import unicodedata
 from collections import Counter
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from .client import DeepSeekClient, ProviderError
 from .schemas import validate_batch
 from .memory.storage import load_profile
@@ -14,6 +17,32 @@ def setting(name, default, ceiling):
         return min(ceiling, max(0, int(os.getenv(name) or default)))
     except (ValueError, TypeError):
         return int(default)
+
+
+def cluster_id(signature, batch_start):
+    """Only structured, dated semantic signatures may group across batches.
+
+    Other valid labels are scoped to their batch; invalid or ambiguous text is
+    discarded before hashing. Model text itself never reaches the report.
+    """
+    normalized = unicodedata.normalize('NFKC', signature).casefold().strip()
+    normalized = re.sub(r'\s+', ' ', normalized)
+    if not 2 <= len(normalized) <= 100 or not re.fullmatch(r'[\w |\-]+', normalized):
+        return ''
+    parts = [part.strip() for part in normalized.split('|')]
+    placeholders = {'actor', 'action', 'place', 'date', 'unknown', 'none', 'other', 'unspecified'}
+    semantic = (len(parts) == 4 and all(2 <= len(part) <= 40 and part not in placeholders for part in parts)
+                and all(re.fullmatch(r'[\w -]+', part) for part in parts[:3]))
+    if semantic:
+        try:
+            semantic = bool(re.fullmatch(r'\d{4}-\d{2}-\d{2}', parts[3]) and date.fromisoformat(parts[3]))
+        except ValueError:
+            semantic = False
+    if semantic:
+        key = 'semantic:' + '|'.join(parts)
+    else:
+        key = f'batch:{batch_start}:' + normalized
+    return hashlib.sha256(key.encode('utf-8')).hexdigest()[:24]
 
 
 def run(candidates, client=None):
@@ -96,9 +125,7 @@ def run(candidates, client=None):
                     for field, values in allowed.items():
                         label = item[field].strip().lower()
                         item[field] = label if label in values else 'other'
-                    # Cluster labels are untrusted free text; use a one-way grouping id.
-                    import hashlib
-                    item['event_cluster'] = hashlib.sha256(item['event_cluster'].encode()).hexdigest()[:12] if item['event_cluster'] else ''
+                    item['event_cluster'] = cluster_id(item['event_cluster'], start)
                 rankings.extend(parsed)
                 if (report['prompt_tokens'] > input_cap or report['completion_tokens'] > output_cap or report['total_tokens'] > total_cap):
                     report['status'] = 'budget_exhausted'

@@ -29,6 +29,9 @@ on:
   repository_dispatch:  # 支持 Cloudflare Workers 等外部触发
     types: [Daily_Gather_cf_triggerd]
 
+permissions:
+  contents: read
+
 concurrency:
   group: oughtgather-dedup
   cancel-in-progress: false
