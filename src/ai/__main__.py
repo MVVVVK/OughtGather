@@ -20,8 +20,8 @@ def main():
     Path('output').mkdir(exist_ok=True)
     Path('output/ai-editor-report.json').write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding='utf8')
     Path('output/ai-editor-summary.md').write_text(
-        '# AI Shadow Editor\n\nStatus: {}\n\nCandidates: {} · Analyzed: {} · Calls: {}\n'.format(
-            report['status'], report.get('candidate_count', 0), report.get('analyzed_count', 0), report.get('api_calls', 0)), encoding='utf8')
+        '# AI Shadow Editor\n\nStatus: {}\n\nCandidates: {} · Topics: {} · Selected: {} · Calls: {}\n'.format(
+            report['status'], report.get('candidate_count', 0), report.get('topic_count', 0), report.get('selected_article_count', 0), report.get('api_calls', 0)), encoding='utf8')
 
 
 if __name__ == '__main__':
