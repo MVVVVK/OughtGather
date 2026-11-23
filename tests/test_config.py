@@ -8,6 +8,7 @@ import os
 import re
 import pytest
 from datetime import datetime
+from zoneinfo import ZoneInfo
 
 from src.config import (
     TitleConfig,
@@ -18,6 +19,14 @@ from src.config import (
 )
 
 
+@pytest.fixture
+def fixed_shanghai_date(monkeypatch):
+    """Shanghai is already on the next date while UTC is still on the prior day."""
+    fixed = datetime(2026, 11, 24, 0, 30, tzinfo=ZoneInfo("Asia/Shanghai"))
+    monkeypatch.setattr("src.config.get_now", lambda: fixed)
+    return "2026-11-24"
+
+
 # =========================================================================
 # TitleConfig 测试
 # =========================================================================
@@ -25,18 +34,18 @@ from src.config import (
 class TestTitleConfig:
     """TitleConfig 数据类测试"""
 
-    def test_simple_time_placeholder(self):
+    def test_simple_time_placeholder(self, fixed_shanghai_date):
         """测试独立的 {time} 占位符"""
         config = TitleConfig(text="每日新闻 {time}")
         result = config.get_display_text()
-        today = datetime.now().strftime("%Y-%m-%d")
+        today = fixed_shanghai_date
         assert result == f"每日新闻 {today}"
 
-    def test_nested_time_placeholder(self):
+    def test_nested_time_placeholder(self, fixed_shanghai_date):
         """测试嵌套的 {前缀 {time}} 占位符"""
         config = TitleConfig(text="{Daily News {time}}")
         result = config.get_display_text()
-        today = datetime.now().strftime("%Y-%m-%d")
+        today = fixed_shanghai_date
         assert result == f"Daily News {today}"
 
     def test_no_time_placeholder(self):
@@ -44,11 +53,11 @@ class TestTitleConfig:
         config = TitleConfig(text="固定书名")
         assert config.get_display_text() == "固定书名"
 
-    def test_multiple_time_placeholders(self):
+    def test_multiple_time_placeholders(self, fixed_shanghai_date):
         """测试多个 {time} 占位符"""
         config = TitleConfig(text="{time} - 新闻 - {time}")
         result = config.get_display_text()
-        today = datetime.now().strftime("%Y-%m-%d")
+        today = fixed_shanghai_date
         assert result == f"{today} - 新闻 - {today}"
 
     def test_img_optional(self):
@@ -59,18 +68,18 @@ class TestTitleConfig:
         config_with_img = TitleConfig(text="Test", img="https://example.com/img.jpg")
         assert config_with_img.img == "https://example.com/img.jpg"
 
-    def test_display_text_with_br_tag(self):
+    def test_display_text_with_br_tag(self, fixed_shanghai_date):
         """测试含 </br> 的标题，get_display_text 保留标签"""
         config = TitleConfig(text="{Daily News</br>{time}}")
         result = config.get_display_text()
-        today = datetime.now().strftime("%Y-%m-%d")
+        today = fixed_shanghai_date
         assert result == f"Daily News</br> {today}"
 
-    def test_plain_text_strips_br_tag(self):
+    def test_plain_text_strips_br_tag(self, fixed_shanghai_date):
         """测试 get_plain_text 去除 </br> 标签"""
         config = TitleConfig(text="{Daily News</br>{time}}")
         result = config.get_plain_text()
-        today = datetime.now().strftime("%Y-%m-%d")
+        today = fixed_shanghai_date
         assert result == f"Daily News {today}"
         assert "</br>" not in result
         assert "<br>" not in result

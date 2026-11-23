@@ -23,7 +23,7 @@ class CandidateCollector:
         self._lock = Lock()
         self.excerpt_limit = max(0, min(excerpt_limit, 4000))
 
-    def collect(self, source, candidates, source_key=None):
+    def collect(self, source, candidates, source_key=None, feed_language=None, source_language=None):
         """Collect copies after dedup filtering; URLs are hashed and never sent."""
         entries = []
         for candidate in candidates:
@@ -33,7 +33,7 @@ class CandidateCollector:
             entries.append({'candidate_id': candidate_id,
                             'title': _plain(candidate.get('title'), 500),
                             'source': _plain(source, 200),
-                            'language': _plain(entry.get('language'), 20),
+                            'language': next((value for value in (_plain(x, 20) for x in (entry.get('language'), feed_language, source_language)) if value), 'unknown'),
                             'published_at': _plain(candidate.get('published'), 100),
                             'rss_excerpt': _plain(entry.get('summary') or entry.get('description'), self.excerpt_limit),
                             'media_hint': bool(candidate.get('_media'))})

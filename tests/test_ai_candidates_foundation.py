@@ -16,3 +16,13 @@ def test_collector_is_read_only_and_balanced():
     assert all(len(c['rss_excerpt']) <= 10 and 'url' not in c for c in snapshot)
     assert collector.snapshot(2) == snapshot
     assert collector.snapshot(0) == []
+
+
+def test_language_fallback_entry_feed_source_and_unknown():
+    collector = CandidateCollector()
+    entries = [{'url': f'https://example.test/{i}', 'title': 'News', '_entry': entry}
+               for i, entry in enumerate([{'language':'fr'}, {}, {}, {}])]
+    collector.collect('a', entries[:2], feed_language='en', source_language='es')
+    collector.collect('b', entries[2:3], source_language='es')
+    collector.collect('c', entries[3:])
+    assert {row['language'] for row in collector.snapshot(4)} == {'fr','en','es','unknown'}

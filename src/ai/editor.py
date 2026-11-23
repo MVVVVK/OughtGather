@@ -1,189 +1,341 @@
-"""Offline-comparable shadow editor; no writes to the publication pipeline."""
-import hashlib
+"""Topic-first shadow editor, isolated from publication and delivery."""
 import json
 import os
 import re
 import time
-import unicodedata
-from collections import Counter
-from datetime import date, datetime, timezone
+from datetime import datetime, timezone
 from .client import DeepSeekClient, ProviderError
-from .schemas import validate_batch
+from .identifiers import shorten
 from .memory.storage import load_profile
+from .schemas import validate_groups, validate_audit, validate_selection
 
 
 def setting(name, default, ceiling):
     try:
         return min(ceiling, max(0, int(os.getenv(name) or default)))
     except (ValueError, TypeError):
-        return int(default)
+        return default
 
 
-def cluster_id(signature, batch_start):
-    """Only structured, dated semantic signatures may group across batches.
+class StageFailure(Exception):
+    def __init__(self, reason):
+        self.reason = reason
+        super().__init__(reason)
 
-    Other valid labels are scoped to their batch; invalid or ambiguous text is
-    discarded before hashing. Model text itself never reaches the report.
-    """
-    normalized = unicodedata.normalize('NFKC', signature).casefold().strip()
-    normalized = re.sub(r'\s+', ' ', normalized)
-    if not 2 <= len(normalized) <= 100 or not re.fullmatch(r'[\w |\-]+', normalized):
-        return ''
-    parts = [part.strip() for part in normalized.split('|')]
-    placeholders = {'actor', 'action', 'place', 'date', 'unknown', 'none', 'other', 'unspecified'}
-    semantic = (len(parts) == 4 and all(2 <= len(part) <= 40 and part not in placeholders for part in parts)
-                and all(re.fullmatch(r'[\w -]+', part) for part in parts[:3]))
-    if semantic:
-        try:
-            semantic = bool(re.fullmatch(r'\d{4}-\d{2}-\d{2}', parts[3]) and date.fromisoformat(parts[3]))
-        except ValueError:
-            semantic = False
-    if semantic:
-        key = 'semantic:' + '|'.join(parts)
-    else:
-        key = f'batch:{batch_start}:' + normalized
-    return hashlib.sha256(key.encode('utf-8')).hexdigest()[:24]
+
+class Budget:
+    """Reserve before every request; retain worst-case cost when usage is unknown."""
+    def __init__(self, report, started):
+        self.report = report
+        self.max_calls = setting('AI_MAX_CALLS_PER_RUN', 6, 100)
+        self.max_input = setting('AI_MAX_INPUT_TOKENS', 80000, 1000000)
+        self.max_output = setting('AI_MAX_OUTPUT_TOKENS', 8000, 100000)
+        self.max_total = setting('AI_MAX_TOTAL_TOKENS', 88000, 1100000)
+        self.deadline = started + setting('AI_TOTAL_TIMEOUT_SECONDS', 60, 300)
+        self.reserved_input = self.reserved_output = 0
+
+    @staticmethod
+    def estimate(payload):
+        return len(json.dumps(payload, ensure_ascii=False).encode('utf8')) + 1024
+
+    def limit(self, payload, output, reserve_input=0, reserve_output=0):
+        estimate = self.estimate(payload)
+        for name, used, reservation, ceiling, actual in (
+            ('input', self.reserved_input, estimate + reserve_input, self.max_input, self.report['prompt_tokens']),
+            ('output', self.reserved_output, output + reserve_output, self.max_output, self.report['completion_tokens']),
+            ('total', self.reserved_input + self.reserved_output, estimate + output + reserve_input + reserve_output,
+             self.max_total, self.report['total_tokens']),
+        ):
+            if used + reservation > ceiling:
+                return {'resource': name, 'basis': 'actual_usage' if actual >= ceiling else 'reservation'}
+        return None
+
+    def fits(self, payload, output, reserve_input=0, reserve_output=0):
+        return self.limit(payload, output, reserve_input, reserve_output) is None
+
+    def account(self, usage, estimate, output):
+        for field in ('prompt_tokens', 'completion_tokens', 'total_tokens'):
+            self.report[field] += usage[field]
+        self.reserved_input += usage['prompt_tokens'] - estimate
+        self.reserved_output += usage['completion_tokens'] - output
+        for name, field, ceiling in (('input','prompt_tokens',self.max_input), ('output','completion_tokens',self.max_output),
+                                     ('total','total_tokens',self.max_total)):
+            if self.report[field] > ceiling:
+                self.report['budget_limit_hit'] = {'resource': name, 'basis': 'actual_usage'}
+                self.report['retry_blocked_reason'] = 'actual_usage_limit'
+                raise StageFailure('budget_exhausted')
+
+    def selection_reserve(self, preferred_request, group_output, selection_minimum, selection_output):
+        """Reserve future headroom without sacrificing the preferred current evidence."""
+        group_size = self.estimate(preferred_request)
+        free_input = max(0, self.max_input - self.reserved_input - group_size)
+        free_output = max(0, self.max_output - self.reserved_output - group_output)
+        free_total = max(0, self.max_total - self.reserved_input - self.reserved_output - group_size - group_output)
+        protect_output = min(selection_output, free_output, free_total)
+        protect_input = min(selection_minimum, free_input, max(0, free_total - protect_output))
+        return protect_input, protect_output
+
+    def request(self, client, build, output, validate, stage, excerpt_rows, future=None):
+        stats = self.report['excerpt_retention'][stage]
+        original = [(row.get('rss_excerpt') or '') for row in excerpt_rows]
+        stats['received_nonempty'] = sum(bool(value.strip()) for value in original)
+        original_chars = sum(len(value) for value in original)
+        previous_limit = 600
+        for attempt in range(2):
+            remaining = self.deadline - time.monotonic()
+            if remaining <= 0:
+                if attempt:
+                    self.report['retry_blocked_reason'] = 'deadline'
+                raise StageFailure('timeout')
+            if self.report['api_calls'] >= self.max_calls:
+                self.report['budget_limit_hit'] = {'resource': 'calls', 'basis': 'actual_usage'}
+                if attempt:
+                    self.report['retry_blocked_reason'] = 'call_limit'
+                raise StageFailure('budget_exhausted')
+            minimum = build(0)
+            reserve_input = reserve_output = 0
+            max_excerpt = previous_limit if attempt == 0 else previous_limit // 2
+            if future:
+                # Preserve up to 160 characters per excerpt before protecting
+                # uncertain later requests; if even that cannot fit, use less.
+                preferred = build(min(160, max_excerpt))
+                reserve_input, reserve_output = self.selection_reserve(preferred, output, *future)
+                # Protect one minimum-size retry only when all reservations fit.
+                minimum_size = self.estimate(minimum)
+                if (attempt == 0 and self.max_calls - self.report['api_calls'] >= 3 and
+                        self.fits(preferred, output, reserve_input + minimum_size, reserve_output + output)):
+                    reserve_input += minimum_size
+                    reserve_output += output
+            try:
+                payload, previous_limit = fit_payload(build, self, output, reserve_input, reserve_output, max_excerpt)
+            except StageFailure:
+                hit = self.limit(minimum, output, reserve_input, reserve_output)
+                self.report['budget_limit_hit'] = hit or {'resource': 'input', 'basis': 'reservation'}
+                if attempt:
+                    self.report['retry_blocked_reason'] = ('actual_usage_limit' if self.report['budget_limit_hit']['basis'] == 'actual_usage' else 'reservation_insufficient')
+                raise
+            estimate = self.estimate(payload)
+            remaining = self.deadline - time.monotonic()
+            if remaining <= 0:
+                if attempt:
+                    self.report['retry_blocked_reason'] = 'deadline'
+                raise StageFailure('timeout')
+            if attempt:
+                self.report['retry_attempted'] = True
+            self.report['api_calls'] += 1
+            self.report['stage_api_calls'][stage] += 1
+            sent = [value[:previous_limit] for value in original]
+            sent_chars = sum(len(value) for value in sent)
+            stats['attempts'].append({'sent_nonempty': sum(bool(value.strip()) for value in sent),
+                                      'average_retained_chars': round(sent_chars / len(sent), 2) if sent else 0,
+                                      'retention_rate': round(sent_chars / original_chars, 4) if original_chars else None})
+            self.reserved_input += estimate
+            self.reserved_output += output
+            try:
+                data, usage = client.analyze_batch(payload, remaining)
+                self.account(usage, estimate, output)
+                self.report['last_response_status'] = 'completed'
+                try:
+                    return validate(data)
+                except (ValueError, TypeError, KeyError):
+                    self.report['last_attempt_error_category'] = 'local_validation'
+                    self.report['last_error_response_status'] = 'completed'
+                    if attempt:
+                        self.report['retry_blocked_reason'] = 'retry_limit'
+                        raise StageFailure('invalid_model_output') from None
+            except ProviderError as exc:
+                if exc.usage is not None:
+                    self.account(exc.usage, estimate, output)
+                category = exc.category
+                if category in ('invalid_structured_output', 'missing_output_text'):
+                    self.report['last_response_status'] = 'completed'
+                    self.report['last_attempt_error_category'] = 'json_parse' if category == 'invalid_structured_output' else 'missing_output_text'
+                elif category.startswith('response_incomplete_'):
+                    self.report['last_response_status'] = 'incomplete'
+                    self.report['last_attempt_error_category'] = category
+                elif category == 'response_failed':
+                    self.report['last_response_status'] = 'failed'
+                    self.report['last_attempt_error_category'] = 'provider_failed'
+                else:
+                    self.report['last_response_status'] = (exc.response_status or
+                                                           ('http_error' if category == 'http' else 'not_received'))
+                    safe_categories = {'timeout', 'invalid_response', 'invalid_usage'}
+                    self.report['last_attempt_error_category'] = ('provider_http' if category == 'http' else
+                                                                  category if category in safe_categories else 'provider_error')
+                self.report['last_error_response_status'] = self.report['last_response_status']
+                retryable = (category in ('timeout','response_incomplete_max_tokens','missing_output_text',
+                                           'invalid_structured_output','invalid_response') or
+                             (category == 'http' and exc.status in (429,500,502,503,504)))
+                if not retryable or attempt:
+                    self.report['retry_blocked_reason'] = 'retry_limit' if attempt else 'non_retryable'
+                    raise StageFailure(category) from None
+                if time.monotonic() + exc.retry_after >= self.deadline:
+                    self.report['retry_blocked_reason'] = 'deadline'
+                    raise StageFailure(category) from None
+                if exc.retry_after:
+                    time.sleep(exc.retry_after)
+        raise StageFailure('invalid_model_output')
+
+
+def fit_payload(build, budget, output, reserve_input=0, reserve_output=0, max_excerpt=600):
+    """Shorten excerpts to leave explicit stage/retry headroom; never drop candidates."""
+    lo, hi, best = 0, max_excerpt, None
+    while lo <= hi:
+        middle = (lo + hi) // 2
+        payload = build(middle)
+        if budget.fits(payload, output, reserve_input, reserve_output):
+            best, lo = (payload, middle), middle + 1
+        else:
+            hi = middle - 1
+    if best is None:
+        raise StageFailure('budget_exhausted')
+    return best
+
+
+def provider_safe(value):
+    """Remove URLs and SHA-256-like IDs from untrusted text and profile input."""
+    if isinstance(value, str):
+        value = re.sub(r'(?:https?://|www\.)[^\s<>\"\']+', '[link]', value, flags=re.IGNORECASE)
+        return re.sub(r'[0-9a-fA-F]{64}', '[id]', value)
+    if isinstance(value, list):
+        return [provider_safe(item) for item in value]
+    if isinstance(value, dict):
+        return {provider_safe(key) if isinstance(key, str) else key: provider_safe(item) for key, item in value.items()}
+    return value
 
 
 def run(candidates, client=None):
     started = time.monotonic()
     mode = os.getenv('AI_EDITOR_MODE', 'off')
-    model = os.getenv('DEEPSEEK_MODEL') or 'deepseek-flash'
-    report = {'mode': mode, 'model': model, 'status': 'off', 'scope': 'rss_only',
-              'started_at': datetime.now(timezone.utc).isoformat(), 'candidate_count': len(candidates),
-              'analyzed_count': 0, 'skipped_budget': 0, 'failed_count': 0,
+    report = {'mode': mode, 'model': os.getenv('DEEPSEEK_MODEL') or 'deepseek-flash',
+              'status': 'off', 'scope': 'rss_only', 'started_at': datetime.now(timezone.utc).isoformat(),
+              'candidate_count': len(candidates), 'candidate_cap': setting('AI_MAX_CANDIDATES', 200, 1000),
               'api_calls': 0, 'prompt_tokens': 0, 'completion_tokens': 0, 'total_tokens': 0,
               'estimated_cost': None, 'pricing_version': os.getenv('AI_PRICING_VERSION', 'unconfigured'),
               'memory_revision': None, 'memory_status': 'not_loaded', 'fallback_reason': None,
-              'traditional_selected': [], 'ai_recommended': [], 'agreement': [], 'ai_only': [], 'traditional_only': [],
-              'ranking': [], 'topic_distribution': {}, 'region_distribution': {}, 'language_distribution': {}, 'event_clusters': {}}
+              'topic_count': 0, 'multi_article_topic_count': 0, 'topic_grouping_status': 'not_started',
+              'topic_audit_status': 'not_started', 'audited_group_count': 0, 'split_group_count': 0,
+              'topic_count_after_audit': 0, 'topic_selection_status': 'not_started', 'selected_topic_count': 0, 'selected_article_count': 0,
+              'excerpt_retention': {stage: {'received_nonempty': 0, 'attempts': []} for stage in ('topic_grouping', 'topic_audit', 'topic_selection')},
+              'audit_splits': [],
+              'max_articles_per_topic': 0, 'duplicate_candidates_grouped': 0, 'ai_recommended': [],
+              'topic_groups': [], 'traditional_selected': [], 'agreement': [], 'ai_only': [], 'traditional_only': [],
+              'failed_stage': None, 'last_attempt_error_category': None, 'last_response_status': 'not_received',
+              'last_error_response_status': None,
+              'retry_attempted': False, 'retry_blocked_reason': None, 'budget_limit_hit': None,
+              'stage_api_calls': {'topic_grouping': 0, 'topic_audit': 0, 'topic_selection': 0}}
     if mode != 'shadow':
         return report
     key = os.getenv('DEEPSEEK_API_KEY', '')
     if not key and client is None:
-        report.update(status='unavailable', fallback_reason='missing_key', duration=round(time.monotonic() - started, 3))
+        report.update(status='unavailable', fallback_reason='missing_key', duration=round(time.monotonic()-started, 3))
         return report
-    client = client or DeepSeekClient(key, model)
-    profile, revision, status = load_profile()
-    report.update(memory_revision=revision, memory_status=status, status='ok')
-    cap = setting('AI_MAX_CANDIDATES', 200, 1000)
-    batch_size = max(1, setting('AI_MAX_BATCH_CANDIDATES', 40, 100))
-    max_calls = setting('AI_MAX_CALLS_PER_RUN', 6, 100)
-    input_cap = setting('AI_MAX_INPUT_TOKENS', 80000, 1000000)
-    output_cap = setting('AI_MAX_OUTPUT_TOKENS', 8000, 100000)
-    total_cap = setting('AI_MAX_TOTAL_TOKENS', 88000, 1100000)
-    deadline = started + setting('AI_TOTAL_TIMEOUT_SECONDS', 60, 300)
-    selected = [c['candidate_id'] for c in candidates if c.get('traditional_selected')]
-    candidate_truncated = len(candidates) > cap
-    all_candidates = candidates
+    client = client or DeepSeekClient(key, report['model'])
+    profile, revision, memory_status = load_profile()
+    report.update(status='ok', memory_revision=revision, memory_status=memory_status)
+    cap = report['candidate_cap']
+    report['skipped_candidate_cap'] = max(0, len(candidates) - cap)
+    report['coverage_status'] = 'candidate_cap_reached' if len(candidates) > cap else 'complete'
+    report['traditional_selected'] = [c['candidate_id'] for c in candidates if c.get('traditional_selected')]
     candidates = candidates[:cap]
-    report['traditional_selected'] = selected
-    report['candidates'] = [{k: c.get(k) for k in ('candidate_id', 'title', 'source', 'language', 'traditional_selected', 'traditional_status', 'traditional_reason')} for c in all_candidates]
-    rankings = []
-    # Reserve worst-case usage for requests with unknown outcomes (e.g. timeout).
-    reserved_input = reserved_output = 0
-    for start in range(0, len(candidates), batch_size):
-        batch = candidates[start:start + batch_size]
-        # Never transmit selection state or URLs to the model.
-        clean = [{k: c.get(k) for k in ('candidate_id', 'title', 'source', 'language', 'published_at', 'rss_excerpt')} for c in batch]
-        desired_output = max(256, len(batch) * 160)
-        max_tokens = min(desired_output, output_cap - reserved_output, total_cap - reserved_input - reserved_output)
-        if max_tokens < desired_output:
-            report['status'] = 'budget_exhausted'; break
-        payload = client.payload(clean, profile, max_tokens)
-        # UTF-8 bytes plus framing overhead conservatively bound token count for typical BPE tokenizers.
-        estimate = len(json.dumps(payload, ensure_ascii=False).encode('utf8')) + 1024
-        for attempt in range(2):
-            remaining = deadline - time.monotonic()
-            if (report['api_calls'] >= max_calls or remaining <= 0 or
-                    reserved_input + estimate > input_cap or
-                    reserved_output + max_tokens > output_cap or
-                    reserved_input + reserved_output + estimate + max_tokens > total_cap):
-                report['status'] = 'budget_exhausted'; break
-            report['api_calls'] += 1
-            reserved_input += estimate
-            reserved_output += max_tokens
-            try:
-                data, usage = client.analyze_batch(payload, remaining)
-                for key_name in ('prompt_tokens', 'completion_tokens', 'total_tokens'):
-                    report[key_name] += usage[key_name]
-                reserved_input += usage['prompt_tokens'] - estimate
-                reserved_output += usage['completion_tokens'] - max_tokens
-                # Discard free-form reason: it could echo private profile or adversarial content.
-                parsed = validate_batch(data, {c['candidate_id'] for c in batch})
-                allowed = {
-                    'topic': {'politics', 'economy', 'law', 'culture', 'society', 'climate', 'health', 'science', 'conflict', 'international'},
-                    'region': {'africa', 'middle east', 'europe', 'asia', 'americas', 'world', 'international'},
-                    'news_type': {'news', 'analysis', 'opinion', 'feature', 'investigation', 'interview', 'report'}}
-                by_candidate = {c['candidate_id']: c for c in batch}
-                for item in parsed:
-                    strengths = sorted(('importance', 'expected_depth', 'novelty', 'timeliness', 'perspective_value'), key=lambda name: (-item[name], name))[:2]
-                    item['reason'] = 'Local score basis: ' + ', '.join(f'{name}={item[name]}' for name in strengths)
-                    candidate = by_candidate[item['candidate_id']]
-                    if len(candidate.get('rss_excerpt') or '') < 80 and len(candidate.get('title') or '') < 30:
-                        item['confidence'] = 'low'
-                    for field, values in allowed.items():
-                        label = item[field].strip().lower()
-                        item[field] = label if label in values else 'other'
-                    item['event_cluster'] = cluster_id(item['event_cluster'], start)
-                rankings.extend(parsed)
-                if (report['prompt_tokens'] > input_cap or report['completion_tokens'] > output_cap or report['total_tokens'] > total_cap):
-                    report['status'] = 'budget_exhausted'
-                break
-            except ProviderError as exc:
-                retryable = exc.category == 'timeout' or (exc.category == 'http' and exc.status in (429, 500, 502, 503, 504))
-                if not retryable or attempt or time.monotonic() + exc.retry_after >= deadline:
-                    report.update(status='degraded', fallback_reason=exc.category, http_status=exc.status, failed_count=report['failed_count'] + len(batch)); break
-                if exc.retry_after:
-                    time.sleep(exc.retry_after)
-            except (ValueError, TypeError, KeyError):
-                if attempt:
-                    report.update(status='degraded', fallback_reason='invalid_model_output', failed_count=report['failed_count'] + len(batch))
-        if report['status'] != 'ok':
-            break
-    if candidate_truncated and report['status'] == 'ok':
-        report['status'] = 'budget_exhausted'
-    report['skipped_budget'] = max(0, report['candidate_count'] - len(rankings) - report['failed_count']) if report['status'] == 'budget_exhausted' else max(0, report['candidate_count'] - cap)
-    rankings.sort(key=lambda x: (-x['score'], x['candidate_id']))
-    # Reserve exploration positions for important stories outside the profile.
-    k = len(selected)
-    exploration_count = k // 5
-    chosen = []
-    for row in sorted(rankings, key=lambda x: (-x['importance'], -x['score'], x['candidate_id'])):
-        if len(chosen) >= exploration_count:
-            break
-        if row['importance'] >= 75 and row['personal_fit'] <= 50:
-            chosen.append(row)
-    # Where alternatives exist, limit one region or topic to half the recommendations.
-    cap_per_group = max(1, (k + 1) // 2)
-    for strict in (True, False):
-        for row in rankings:
-            if len(chosen) >= k:
-                break
-            if row in chosen:
-                continue
-            if strict and any(sum(c[group] == row[group] for c in chosen) >= cap_per_group
-                              for group in ('region', 'topic') if row[group] != 'other'):
-                continue
-            chosen.append(row)
-    recommended = [x['candidate_id'] for x in chosen]
-    by_id = {c['candidate_id']: c for c in candidates}
-    for item in rankings:
-        candidate = by_id[item['candidate_id']]
-        item['title'] = candidate['title']
-        item['source'] = candidate['source']
-    report['analyzed_count'], report['ranking'], report['ai_recommended'] = len(rankings), rankings, recommended
-    report['agreement'] = [x for x in recommended if x in selected]
-    report['ai_only'] = [x for x in recommended if x not in selected]
-    report['traditional_only'] = [x for x in selected if x not in recommended]
-    report['topic_distribution'] = dict(Counter(x['topic'] for x in rankings))
-    report['region_distribution'] = dict(Counter(x['region'] for x in rankings))
-    report['language_distribution'] = dict(Counter(c.get('language') or 'unknown' for c in candidates))
-    clusters = {}
-    for item in rankings:
-        if item['event_cluster']:
-            clusters.setdefault(item['event_cluster'], []).append({'candidate_id': item['candidate_id'], 'type': item['cluster_type']})
-    report['event_clusters'] = {k: v for k, v in clusters.items() if len(v) > 1}
+    if not candidates:
+        report.update(topic_grouping_status='not_needed', topic_audit_status='not_needed', topic_selection_status='not_needed', duration=round(time.monotonic()-started, 3))
+        return report
+    budget = Budget(report, started)
+    stage = 'topic_grouping'
+    try:
+        clean = [{'candidate_id': c['candidate_id'], **{k: provider_safe(c.get(k)) for k in ('title','source','language','published_at','rss_excerpt')}} for c in candidates]
+        short_candidates, short_to_real = shorten(clean, 'c', width=3)
+        by_short = {row['candidate_id']: row for row in short_candidates}
+        real_to_short = {real: short for short, real in short_to_real.items()}
+        group_output = max(256, len(short_candidates) * 20)
+        def grouping_input(limit):
+            return [{**row, 'rss_excerpt': (row.get('rss_excerpt') or '')[:limit]} for row in short_candidates]
+        group_build = lambda n: client.grouping_payload(grouping_input(n), group_output)
+        # Reserve a bounded share, not a fictional worst-case audit and selection.
+        # Later stages are planned from the groups that actually materialize.
+        groups = budget.request(client, group_build, group_output, lambda data: validate_groups(data, short_to_real),
+                                'topic_grouping', short_candidates, future=(budget.max_input // 5, 800))
+        report['topic_grouping_status'] = 'ok'
+        report['topic_count'] = len(groups)
+        stage = 'topic_audit'
+        multi_groups = [group for group in groups if len(group['members']) > 1]
+        report['audited_group_count'] = len(multi_groups)
+        if multi_groups:
+            audit_groups = {f'a{i:03d}': group for i, group in enumerate(multi_groups, 1)}
+            audit_output = max(256, sum(len(g['members']) for g in multi_groups) * 20)
+            def audit_input(limit):
+                return [{'group_id': group_id,
+                         'candidates': [{**by_short[real_to_short[c]],
+                                         'rss_excerpt': (by_short[real_to_short[c]].get('rss_excerpt') or '')[:limit]}
+                                        for c in group['members']]}
+                        for group_id, group in audit_groups.items()]
+            audit_build = lambda n: client.audit_payload(audit_input(n), audit_output)
+            selection_preview = [{'group_id': f'g{i:03d}', 'candidates': [
+                {**by_short[real_to_short[c]], 'rss_excerpt': ''} for c in group['members']]}
+                                 for i, group in enumerate(groups, 1)]
+            selection_minimum = budget.estimate(client.selection_payload(selection_preview, provider_safe(profile), 800))
+            audit_rows = [by_short[real_to_short[c]] for group in multi_groups for c in group['members']]
+            groups, split_count = budget.request(
+                client, audit_build, audit_output,
+                lambda data: validate_audit(data, audit_groups, short_to_real, groups),
+                'topic_audit', audit_rows, future=(selection_minimum, 800))
+            report.update(topic_audit_status='ok', split_group_count=split_count)
+            for original in multi_groups:
+                original_members = set(original['members'])
+                parts = [group for group in groups if set(group['members']) <= original_members]
+                if len(parts) > 1:
+                    report['audit_splits'].append({'original_group_id': original['group_id'],
+                        'partitions': [{'group_id': part['group_id'], 'members': [
+                            {'candidate_id': real, 'title': by_short[real_to_short[real]]['title']}
+                            for real in part['members']]} for part in parts]})
+        else:
+            report['topic_audit_status'] = 'not_needed'
+        report['topic_count_after_audit'] = len(groups)
+        report['multi_article_topic_count'] = sum(len(g['members']) > 1 for g in groups)
+        report['duplicate_candidates_grouped'] = sum(len(g['members']) - 1 for g in groups)
+        group_short_to_real = {f'g{i:03d}': group['group_id'] for i, group in enumerate(groups, 1)}
+        real_to_group_short = {v: k for k, v in group_short_to_real.items()}
+        provider_members = {real_to_group_short[g['group_id']]: {real_to_short[c] for c in g['members']} for g in groups}
+        safe_groups = []
+        for group in groups:
+            members = []
+            for real in group['members']:
+                item = by_short[real_to_short[real]]
+                members.append({'candidate_id': real, 'title': item['title'], 'source': item['source']})
+            safe_groups.append({'group_id': group['group_id'], 'topic_title': members[0]['title'], 'members': members,
+                                'representative_id': None,
+                                'shared_slot_reason': 'Grouped as the same news story; at most one representative.' if len(members) > 1 else ''})
+        report['topic_groups'] = safe_groups
+        stage = 'topic_selection'
+        select_output = 800
+        def selection_input(limit):
+            return [{'group_id': real_to_group_short[g['group_id']],
+                     'candidates': [{**by_short[real_to_short[c]], 'rss_excerpt': (by_short[real_to_short[c]].get('rss_excerpt') or '')[:limit]}
+                                    for c in g['members']]} for g in groups]
+        select_build = lambda n: client.selection_payload(selection_input(n), provider_safe(profile), select_output)
+        selected = budget.request(client, select_build, select_output, lambda data: validate_selection(data, provider_members),
+                                  'topic_selection', short_candidates)
+        selected_real = [(group_short_to_real[group], short_to_real[cid]) for group, cid in selected]
+        report['topic_selection_status'] = 'ok'
+        report['ai_recommended'] = [cid for _, cid in selected_real]
+        report['selected_topic_count'] = report['selected_article_count'] = len(selected_real)
+        report['max_articles_per_topic'] = 1 if selected_real else 0
+        representative = dict(selected_real)
+        for group in safe_groups:
+            group['representative_id'] = representative.get(group['group_id'])
+            if group['representative_id']:
+                group['topic_title'] = next(m['title'] for m in group['members'] if m['candidate_id'] == group['representative_id'])
+        traditional = report['traditional_selected']
+        report['agreement'] = [cid for cid in report['ai_recommended'] if cid in traditional]
+        report['ai_only'] = [cid for cid in report['ai_recommended'] if cid not in traditional]
+        report['traditional_only'] = [cid for cid in traditional if cid not in report['ai_recommended']]
+    except StageFailure as exc:
+        report.update(status='degraded', fallback_reason=exc.reason, failed_stage=stage)
+        report[stage + '_status'] = 'failed'
+    except Exception:
+        report.update(status='degraded', fallback_reason='internal_error', failed_stage=stage)
+        report[stage + '_status'] = 'failed'
     try:
         in_price = float(os.environ['AI_INPUT_PRICE_PER_MILLION'])
         out_price = float(os.environ['AI_OUTPUT_PRICE_PER_MILLION'])
