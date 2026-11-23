@@ -168,6 +168,9 @@ on:
 | Secret / 环境变量 | 说明 |
 | --- | --- |
 | `CONFIG_JSON` | 完整的 `config.json` 字符串；优先级高于项目根目录的 `config.json` 文件。推荐在 GitHub Actions 中使用，可避免将私有内容源写入仓库。**项目提供了一个可视化 HTML [配置编辑器](https://liusonwood.github.io/OughtGather/)。** |
+| `DELIVERY_BACKUP_KEY` | 加密补传备份的独立强密钥，至少 32 字节 |
+| `EMAIL_FALLBACK_ATTACHMENT` | 设为 true 时在 WebDAV 失败时发送 EPUB 附件 |
+| `EMAIL_RECIPIENT` | 通用邮件收件地址；未设置时使用 KINDLE_EMAIL |
 | `EPUB_LANGUAGE` | 可选 EPUB/Bing locale，例如 `en-US` 或 `zh-CN`；未设置或无效时使用英文 `en-US` |
 | `KINDLE_EMAIL` | Kindle 接收邮箱（`@kindle.com`） |
 | `SMTP_HOST` | 发件邮箱 SMTP 服务器地址，如 `smtp.gmail.com` |
@@ -177,6 +180,7 @@ on:
 | `WEBDAV_ENABLED` | 设置为 `true` 以启用 WebDAV 上传 |
 | `WEBDAV_PASSWORD` | WebDAV 密码 |
 | `WEBDAV_REMOTE_PATH` | 远程存储路径，默认 `/` |
+| `WEBDAV_RETENTION_DAYS` | 归档保留天数，默认 30 |
 | `WEBDAV_URL` | WebDAV 服务器地址 |
 | `WEBDAV_USERNAME` | WebDAV 用户名 |
 
