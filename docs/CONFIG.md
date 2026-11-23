@@ -102,8 +102,10 @@
 
 | metadata 键 | 类型 | 说明 |
 |------------|------|------|
-| `metadata.full_text` | string | 是否抓取完整正文。`"N"`（默认）→ 使用 feed 提供的摘要；`"Y"` → 访问原始 URL，用 trafilatura 提取全文，失败时回退到 BeautifulSoup 提取 `<article>`/`<main>` 等区域 |
-| `limit` | number | 限制抓取最大条目数，未设置时遵循全局 limit |
+| `metadata.full_text` | string | `"N"`（默认）使用 RSS 内容；`"Y"` 先尝试提取原网页，失败时回退到 RSS 正文、摘要或元信息 |
+| `metadata.limit` | number | 来源实际入选的最大条数；未设置时遵循全局 limit |
+| `metadata.text_news_priority` | string | `"Y"`（默认）优先处理没有视频、音频或直播信号的条目；`"N"` 保留 feed 原始顺序。媒体条目如有足够独立正文仍可入选 |
+| `metadata.accept_summary` | string | `"Y"`（默认）允许合法 RSS 摘要回退；`"N"` 排除只有摘要的条目 |
 
 ```json
 {
@@ -113,7 +115,9 @@
   "priority": 10,
   "keep_link": "Y",
   "metadata": {
-    "full_text": "Y"
+    "full_text": "Y",
+    "text_news_priority": "Y",
+    "accept_summary": "Y"
   },
   "exclude": [
     { "type": "start", "value": "阅读更多" },
@@ -122,6 +126,10 @@
   "delete": "广告,推广"
 }
 ```
+
+每次常规抓取的 `quality-report` artifact 包含逐篇 `quality-report.json` 和来源统计 `quality-sources.json`。后者的 `rss_returned` 是 feed 原始条数（获取失败时为 null），`historical_dedup` 是上一快照过滤数，`candidates` 是标题过滤和历史去重后的候选数；`full_text`、`rss_content`、`summary` 和 `selected` 是最终入选数，`rejected` 不含历史去重或配额截断，`quota_limited` 单独统计配额截断。逐篇记录的 `included` 反映最终入选情况；未检查正文的媒体候选可能因配额排除，并带有 `media_candidate` 标记。报告包含来源及文章 URL，分享前请检查 URL 中是否有私密参数。
+
+去重仍使用 feed 的完整候选快照，包括因配额未抓取的条目；下一次这些条目可能被历史去重过滤。测试时可使用 Daily Gather 的 `test_mode` 隔离正式去重记录。
 
 ---
 

@@ -489,11 +489,19 @@ def test_main_raw_counts_isolation(
     # Mock deduplication results (e.g. source1 keeps 2 new articles, source2 keeps 0)
     mock_processed1 = MagicMock()
     mock_processed1.source = source1
+    mock_processed1.source_stats = {}
+    mock_processed1.quality_report = []
+    mock_processed1.error = None
+    mock_processed1.source_title = None
     mock_processed1.success = True
     mock_processed1.articles = [MagicMock(), MagicMock()]  # new count = 2
     
     mock_processed2 = MagicMock()
     mock_processed2.source = source2
+    mock_processed2.source_stats = {}
+    mock_processed2.quality_report = []
+    mock_processed2.error = None
+    mock_processed2.source_title = None
     mock_processed2.success = True
     mock_processed2.articles = []  # new count = 0
     
