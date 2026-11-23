@@ -27,6 +27,16 @@ def test_html_and_missing_dates_do_not_become_news():
     assert probe.parse_feed(b'<html><body>Access denied</body></html>', NOW)['status'] == 'not_feed'
 
 
+def test_publication_and_update_dates_are_not_conflated():
+    atom = b'''<feed xmlns="http://www.w3.org/2005/Atom"><title>Test</title>
+    <updated>2026-11-23T10:00:00Z</updated><id>https://example.com/</id>
+    <entry><title>News</title><id>https://example.com/1</id><link href="https://example.com/1"/>
+    <updated>2026-11-23T09:00:00Z</updated><summary>text</summary></entry></feed>'''
+    result = probe.parse_feed(atom, NOW)
+    assert result['feed_updated'] == '2026-11-23T10:00:00+00:00'
+    assert result['latest_published'] is None and result['published_missing'] == 1
+
+
 def test_overlap_is_explicitly_only_an_exact_lower_bound():
     item = {'url_id': 'url', 'title_id': 'title', 'within_7_days': True}
     other = {'url_id': 'other', 'title_id': 'different', 'within_7_days': True}

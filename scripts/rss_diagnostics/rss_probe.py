@@ -45,8 +45,8 @@ def normalized_url(value):
     return urlunsplit((p.scheme.lower(), p.netloc.lower(), p.path.rstrip('/') or '/', urlencode(sorted(params)), ''))
 
 
-def parsed_date(item):
-    parsed = item.get('published_parsed') or item.get('updated_parsed')
+def parsed_date(item, field='published_parsed'):
+    parsed = item.get(field)
     if not parsed:
         return None
     try:
@@ -85,7 +85,7 @@ def parse_feed(content, now):
             'rss_entries': len(feed.entries), 'valid_title_link': total,
             'recent_items_7d': sum(x['within_7_days'] for x in entries),
             'published_missing': sum(x['published'] is None for x in entries),
-            'feed_updated': parsed_date(feed.feed).isoformat() if parsed_date(feed.feed) else None,
+            'feed_updated': parsed_date(feed.feed, 'updated_parsed').isoformat() if parsed_date(feed.feed, 'updated_parsed') else None,
             'latest_published': max(dates) if dates else None,
             'summary_nonempty': nonempty, 'summary_nonempty_rate': round(nonempty / total, 4) if total else None,
             'average_summary_chars': round(sum(x['summary_chars'] for x in entries) / total, 1) if total else None,
@@ -106,7 +106,7 @@ def fetch(url):
 
 
 def probe(source, now):
-    result = {**source, 'checked_at': now.isoformat()}
+    result = {**source, 'checked_at': datetime.now(timezone.utc).isoformat()}
     target = urlsplit(source['url'])
     if target.scheme != 'https' or not target.hostname:
         return {**result, 'status': 'unsafe_or_non_https'}
