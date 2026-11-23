@@ -84,7 +84,8 @@ class TestImageBugs:
         assert url_with_amp not in chapter.content
         assert "w=800&amp;h=600" not in chapter.content
 
-    def test_trafilatura_images_from_raw_html(self):
+    @patch("src.fetchers.web_fetcher.inspect", return_value=(True, "", 300))
+    def test_trafilatura_images_from_raw_html(self, _quality):
         """Test Bug 1: trafilatura 剥离图片时，从原始 HTML 取回图片 URL。"""
         source = ContentSource(type="web", src="https://example.com", title="Test")
         fetcher = WebFetcher(source)
@@ -201,7 +202,8 @@ class TestImageBugs:
         assert '<img src="https://example.com/a.jpg">' in result or '<img src="https://example.com/a.jpg"/>' in result
         assert '<graphic' not in result.lower()
 
-    def test_web_fetcher_restores_graphic_tags(self):
+    @patch("src.fetchers.web_fetcher.inspect", return_value=(True, "", 300))
+    def test_web_fetcher_restores_graphic_tags(self, _quality):
         """Test that WebFetcher restores <graphic> tags from trafilatura output."""
         source = ContentSource(type="web", src="https://example.com", title="Test")
         fetcher = WebFetcher(source)
@@ -257,7 +259,7 @@ class TestImageBugs:
         """
 
         # Mock trafilatura to return <graphic> instead of <img>
-        trafilatura_content = "<html><body><h1>Article Title</h1><graphic src=\"https://cdn.example.com/photo.webp\"></graphic><p>Article content here.</p></body></html>"
+        trafilatura_content = "<html><body><h1>Article Title</h1><graphic src=\"https://cdn.example.com/photo.webp\"></graphic><p>" + "Article content here. " * 20 + "</p></body></html>"
 
         with patch.object(fetcher, "_make_request") as mock_req:
             mock_req.return_value.text = raw_html

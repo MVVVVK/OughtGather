@@ -143,7 +143,7 @@ class DedupTracker:
         except Exception as e:
             self.logger.exception(f"去重数据库保存失败: {e}")
 
-    def clear(self):
+    def clear(self, persist=True):
         with self._lock:
             self.source_ids.clear()
             self._pending_snapshots.clear()
@@ -153,7 +153,7 @@ class DedupTracker:
             self._session_new_ids.clear()
             self._session_snapshot_added = 0
             self._session_snapshot_removed = 0
-            if os.path.exists(self.data_file):
+            if persist and os.path.exists(self.data_file):
                 try:
                     with open(self.data_file, "w", encoding="utf-8") as f:
                         f.write("")

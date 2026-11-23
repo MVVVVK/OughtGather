@@ -9,6 +9,7 @@ import trafilatura
 
 from src.fetchers.base import BaseFetcher, FetchResult, Article
 from src.utils.logger import get_logger
+from src.fetchers.quality import inspect
 
 
 class WebFetcher(BaseFetcher):
@@ -45,9 +46,14 @@ class WebFetcher(BaseFetcher):
             # 提取正文
             content = self._extract_content(html)
 
-            if not content:
+            valid, reason, length = inspect(content, full=True)
+            result.quality_report.append({"title": title, "source": self.source.title or self.source.src,
+                                          "url": self.source.src, "language": None, "method": "web",
+                                          "text_length": length, "status": "full_text" if valid else "failed",
+                                          "reason": reason})
+            if not valid:
                 result.success = False
-                result.error = "Failed to extract content from webpage"
+                result.error = "Failed to extract content from webpage: " + reason
                 return result
 
             # 从原始 HTML 提取图片：先从 og:image/twitter:image 等 meta 标签获取封面图，

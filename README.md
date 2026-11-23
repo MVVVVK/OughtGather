@@ -487,3 +487,7 @@ python3.11 scripts/update_workflow_secrets.py
 ## 许可证
 
 GNU AGPLv3.0，见 [LICENSE](LICENSE)。
+
+### 抓取质量报告
+
+每次常规抓取将 `output/quality-report.json` 保存为 Actions 的 `quality-report` artifact。RSS 条目会记录正文来源、长度、状态及回退原因；摘要会在 EPUB 中标注，无法获取正文时保留标题和原文链接。正文质量规则是保守启发式判断，可能误判短报道或无法判断网站的隐藏截断；不会绕过访问限制。报告包含原文 URL，可能包含订阅地址中的敏感参数，请谨慎分享。缓存分支作用域、Fresh Start 和独立测试模式见 [去重文档](docs/DEDUP.md)。

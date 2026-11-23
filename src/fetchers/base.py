@@ -55,6 +55,7 @@ class FetchResult:
     error: Optional[str] = None
     error_count: int = 0
     source_title: Optional[str] = None  # 内容源的显示名称（如 RSS feed 标题）
+    quality_report: List[Dict[str, Any]] = field(default_factory=list)
 
     def add_error(self, error_msg: str):
         """添加错误信息"""
@@ -324,7 +325,12 @@ class BaseFetcher(ABC):
         # Playwright 回退说明见 docs/PLAYWRIGHT.md。只有明确标记的 HTML 页面请求才启用浏览器，避免 API/XML 请求
         # 在遇到普通错误时启动 Chromium。
         status_code = getattr(response, "status_code", None)
-        if allow_browser_fallback and isinstance(status_code, int) and status_code != 200:
+        # Do not use the browser to retry access restrictions or JS challenges.
+        # A browser is a rendering fallback for other failed page requests only.
+        from src.fetchers.quality import browser_retry_allowed
+        body = getattr(response, "text", "") if allow_browser_fallback else ""
+        if (allow_browser_fallback and isinstance(status_code, int)
+                and browser_retry_allowed(status_code, body if isinstance(body, str) else "")):
             self.logger.info(
                 f"[Playwright] Triggering browser fallback for {url} "
                 f"after HTTP {status_code}"
@@ -422,23 +428,8 @@ class BaseFetcher(ABC):
                 self.logger.info(
                     f"[Playwright] {url} initial document status: {initial_status}"
                 )
-                if not 200 <= initial_status < 300 and initial_status != 202:
-                    raise RuntimeError(f"browser navigation ended with HTTP {initial_status}")
-
+                # A 202 may be a challenge. Never wait for or solve it.
                 final_status = initial_status
-                if initial_status == 202:
-                    self.logger.info(
-                        f"[Playwright] Waiting for JavaScript challenge: {url}"
-                    )
-                    deadline = time.monotonic() + timeout
-                    while (
-                        (not 200 <= final_status < 300 or final_status == 202)
-                        and time.monotonic() < deadline
-                    ):
-                        # 不等待 networkidle，避免长轮询/分析请求导致无谓超时；
-                        # 仅等待 202 挑战完成并跳转到 2xx。
-                        page.wait_for_timeout(250)
-                        final_status = document_statuses[-1] if document_statuses else None
                 if not 200 <= final_status < 300 or final_status == 202:
                     raise RuntimeError(f"browser navigation ended with HTTP {final_status}")
 
@@ -677,6 +668,7 @@ class BaseFetcher(ABC):
         Returns:
             tuple: (正文 HTML, 原始页面 HTML)。trafilatura 失败时正文为空字符串。
         """
+        self._last_full_text_quality_reason = None
         if not url:
             return "", ""
 
@@ -704,10 +696,14 @@ class BaseFetcher(ABC):
                 # 这里将 <graphic src="..."> 转换回 <img src="...">。
                 content = self._restore_img_tags(content)
 
-            if not content:
-                self.logger.warning(f"trafilatura failed to extract content from {url}")
+            from src.fetchers.quality import inspect
+            valid, reason, _ = inspect(content, full=True)
+            if not valid:
+                self._last_full_text_quality_reason = reason
+                self.logger.warning(f"Full text quality check failed for {url}: {reason}")
+                return "", raw_html
 
-            return content or "", raw_html
+            return content, raw_html
 
         except Exception as e:
             self.logger.error(f"Failed to fetch full text from {url}: {e}")

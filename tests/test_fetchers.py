@@ -252,9 +252,9 @@ class TestBaseFetcherMakeRequest:
     def test_non_200_page_uses_browser_fallback(self, mock_safe_request):
         fetcher = self._make_fetcher()
         mock_response = MagicMock()
-        mock_response.status_code = 202
+        mock_response.status_code = 503
         mock_response.request = MagicMock()
-        mock_response.content = b"challenge"
+        mock_response.content = b"unavailable"
         mock_client = MagicMock()
         mock_client.is_closed = False
         mock_client.request.return_value = mock_response
@@ -294,7 +294,7 @@ class TestBaseFetcherMakeRequest:
     def test_browser_failure_preserves_original_non_200_error(self, mock_safe_request):
         fetcher = self._make_fetcher()
         mock_response = MagicMock()
-        mock_response.status_code = 202
+        mock_response.status_code = 503
         mock_response.request = MagicMock()
         mock_client = MagicMock()
         mock_client.is_closed = False
@@ -305,9 +305,9 @@ class TestBaseFetcherMakeRequest:
         with patch.object(
             fetcher,
             "_make_browser_request",
-            side_effect=RuntimeError("challenge timeout"),
+            side_effect=RuntimeError("browser unavailable"),
         ):
-            with pytest.raises(Exception, match="Unexpected HTTP status 202"):
+            with pytest.raises(Exception, match="Unexpected HTTP status 503"):
                 fetcher._make_request(
                     "https://example.com",
                     allow_browser_fallback=True,
@@ -461,8 +461,8 @@ class TestRSSFetcher:
         assert result.success is True
         assert len(result.articles) == 2
         assert result.articles[0].title == "Entry 1"
-        assert result.articles[0].content == "<p>Content 1</p>"
-        assert result.articles[1].content == "<p>Summary 2</p>"
+        assert "<p>Content 1</p>" in result.articles[0].content
+        assert "<p>Summary 2</p>" in result.articles[1].content
         assert result.source_title == "Test Feed"
 
     @patch("src.fetchers.rss_fetcher.feedparser.parse")
@@ -528,7 +528,7 @@ class TestRSSFetcher:
         fetcher = RSSFetcher(rss_source)
         result = fetcher.fetch()
 
-        assert result.articles[0].content == "<p>Desc</p>"
+        assert "<p>Desc</p>" in result.articles[0].content
 
     def test_full_text_failure_falls_back_to_rss_summary(self, rss_full_text_source):
         fetcher = RSSFetcher(rss_full_text_source)
@@ -543,7 +543,7 @@ class TestRSSFetcher:
             article = fetcher._parse_entry(entry)
 
         assert article is not None
-        assert article.content == "<p>RSS summary</p>"
+        assert "<p>RSS summary</p>" in article.content and "Summary" in article.content
 
     @patch("src.fetchers.rss_fetcher.feedparser.parse")
     def test_rss_global_limit(self, mock_parse):
@@ -666,7 +666,7 @@ class TestRSSFetcher:
     def test_parse_entry_returns_none_without_content(self, rss_source):
         fetcher = RSSFetcher(rss_source)
         entry = _make_feedparser_dict({"title": "Empty", "link": "https://example.com"})
-        assert fetcher._parse_entry(entry) is None
+        assert fetcher._parse_entry(entry).metadata["quality"]["status"] == "failed"
 
     def test_parse_entry_uses_description_and_extracts_images(self, rss_source):
         fetcher = RSSFetcher(rss_source)
@@ -676,7 +676,7 @@ class TestRSSFetcher:
         })
         with patch.object(fetcher, "_extract_images", return_value=["https://example.com/a.jpg"]) as extract:
             article = fetcher._parse_entry(entry)
-        assert article.content.startswith("<img")
+        assert "<img" in article.content
         assert article.images == ["https://example.com/a.jpg"]
         assert article.metadata["categories"] == [{"term": "news"}]
         extract.assert_called_once()
@@ -684,11 +684,11 @@ class TestRSSFetcher:
     def test_parse_entry_full_text_merges_og_and_body_images(self, rss_full_text_source):
         fetcher = RSSFetcher(rss_full_text_source)
         entry = _make_feedparser_dict({"title": "Full", "link": "https://example.com/post", "summary": "fallback"})
-        with patch.object(fetcher, "_fetch_full_text", return_value=("<p>full</p>", "<meta>raw</meta>")), \
+        with patch.object(fetcher, "_fetch_full_text", return_value=("<p>" + "Full article text. " * 25 + "</p>", "<meta>raw</meta>")), \
              patch.object(fetcher, "_extract_og_image", return_value=["og.jpg"]), \
              patch.object(fetcher, "_extract_images", return_value=["og.jpg", "body.jpg"]):
             article = fetcher._parse_entry(entry)
-        assert article.content == "<p>full</p>"
+        assert "Full article text" in article.content
         assert article.images == ["og.jpg", "body.jpg"]
 
 
@@ -760,14 +760,14 @@ class TestWebFetcher:
         mock_response = MagicMock()
         mock_response.text = "<html><body><article><p>正文</p></article></body></html>"
         mock_request.return_value = mock_response
-        mock_extract.return_value = "<p>正文</p>" + "x" * 300
+        mock_extract.return_value = "<p>" + "正文内容" * 100 + "</p>"
 
         fetcher = WebFetcher(web_source)
         result = fetcher.fetch()
 
         assert result.success is True
         assert len(result.articles) == 1
-        assert result.articles[0].content == "<p>正文</p>" + "x" * 300
+        assert result.articles[0].content == "<p>" + "正文内容" * 100 + "</p>"
 
     @patch("src.fetchers.web_fetcher.trafilatura.extract")
     @patch.object(WebFetcher, "_make_request")
@@ -792,7 +792,7 @@ class TestWebFetcher:
         mock_response.text = "<html><body><h1>文章标题</h1><article><p>内容</p></article></body></html>"
         mock_request.return_value = mock_response
 
-        with patch("src.fetchers.web_fetcher.trafilatura.extract", return_value="<p>内容</p>"):
+        with patch("src.fetchers.web_fetcher.trafilatura.extract", return_value="<p>" + "内容" * 200 + "</p>"):
             fetcher = WebFetcher(source)
             result = fetcher.fetch()
             assert result.articles[0].title == "文章标题"
@@ -805,7 +805,7 @@ class TestWebFetcher:
         mock_response.text = "<html><body><p>无标题的页面</p></body></html>"
         mock_request.return_value = mock_response
 
-        with patch("src.fetchers.web_fetcher.trafilatura.extract", return_value="<p>内容</p>"):
+        with patch("src.fetchers.web_fetcher.trafilatura.extract", return_value="<p>" + "内容" * 200 + "</p>"):
             fetcher = WebFetcher(source)
             result = fetcher.fetch()
             # 没有 <title>/<h1>/og:title 时回退到 source.title
@@ -829,14 +829,14 @@ class TestWebFetcher:
         # trafilatura 返回的正文不含图片
         with patch(
             "src.fetchers.web_fetcher.trafilatura.extract",
-            return_value="<p>Some content here.</p>",
+            return_value="<p>" + "Some content here. " * 25 + "</p>",
         ):
             fetcher = WebFetcher(source)
             result = fetcher.fetch()
 
             assert result.success is True
             # 内容用 trafilatura 的（不含 <img>）
-            assert result.articles[0].content == "<p>Some content here.</p>"
+            assert "Some content here." in result.articles[0].content
             # 图片从原始 HTML 取回
             assert "https://example.com/photo.jpg" in result.articles[0].images
 

@@ -4,6 +4,11 @@ on:
   schedule:
     - cron: '37 7 * * *'
   workflow_dispatch:  # 支持手动触发
+    inputs:
+      test_mode:
+        description: "Reprocess articles with isolated dedup history and no delivery"
+        type: boolean
+        default: false
   repository_dispatch:  # 支持 Cloudflare Workers 等外部触发
     types: [Daily_Gather_cf_triggerd]
 
@@ -119,12 +124,14 @@ jobs:
             || { echo "::error::config.json contains invalid JSON. Validate at https://jsonlint.com"; exit 1; }
           echo "✓ config.json is valid"
 
-      - name: Cache dedup records
-        uses: actions/cache@v5
+      - name: Restore dedup records
+        if: ${{ !inputs.test_mode }}
+        uses: actions/cache/restore@v5
         with:
           path: data/fetched_urls.txt
-          key: ${{ runner.os }}-dedup-${{ github.run_id }}
+          key: ${{ runner.os }}-dedup-v2-${{ github.run_id }}-${{ github.run_attempt }}
           restore-keys: |
+            ${{ runner.os }}-dedup-v2-
             ${{ runner.os }}-dedup-
 
       - name: Run Ought Gather
@@ -160,7 +167,27 @@ jobs:
           TESTMAIL_APP_API_KEY: ${{ secrets.TESTMAIL_APP_API_KEY }}
 
         run: |
-          python -u src/main.py
+          if [ "${{ inputs.test_mode }}" = "true" ]; then
+            python -u src/main.py --test-mode
+          else
+            python -u src/main.py
+          fi
+
+      - name: Save dedup records
+        if: ${{ success() && !inputs.test_mode }}
+        uses: actions/cache/save@v5
+        with:
+          path: data/fetched_urls.txt
+          key: ${{ runner.os }}-dedup-v2-${{ github.run_id }}-${{ github.run_attempt }}
+
+      - name: Upload quality report
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: quality-report
+          path: output/quality-report.json
+          if-no-files-found: ignore
+          retention-days: 7
 
       - name: Upload EPUB artifact
         # 仅在手动触发时上传 EPUB，自动触发（外部触发器或 cron 定时）不上传

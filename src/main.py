@@ -115,7 +115,8 @@ def _fresh_start_task(
                     f"[Fresh Start 两阶段] {source.type} | {truncate_url(source.src, 40)}: "
                     f"标记 {len(urls)} 条候选 URL"
                 )
-            result = FetchResult(source=source, articles=[], success=True)
+            result = FetchResult(source=source, articles=[], success=candidates is not None,
+                                 error="Failed to fetch candidate list" if candidates is None else None)
         else:
             result = fetcher.fetch_with_retry()
             if result.success and result.articles:
@@ -166,7 +167,7 @@ def _fetch_source_task(
                         if c.get("url") and not tracker.is_fetched(c["url"], source_key)
                     ]
                     limit = fetcher.get_limit()
-                    to_fetch = new_candidates[:limit]
+                    to_fetch = new_candidates if getattr(fetcher, "fills_candidate_limit", False) is True else new_candidates[:limit]
                     limit_skipped = new_candidates[limit:]
                     skipped_dedup = len(candidates) - len(new_candidates)
                     logger.info(
@@ -177,7 +178,7 @@ def _fetch_source_task(
                     )
                 else:
                     limit = fetcher.get_limit()
-                    to_fetch = candidates[:limit]
+                    to_fetch = candidates if getattr(fetcher, "fills_candidate_limit", False) is True else candidates[:limit]
                     logger.info(
                         f"[两阶段(无去重)] {source.type} | {truncate_url(source.src, 40)}: "
                         f"{len(to_fetch)}/{len(candidates)} 篇待抓取"
@@ -314,7 +315,10 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description="Ought Gather - 自动化信息聚合工具")
     parser.add_argument("--config", help="配置文件路径", default="config.json")
     parser.add_argument("--fresh-start", action="store_true", help="清空去重日志并全量标记当前所有 URL，不进行推送")
+    parser.add_argument("--test-mode", action="store_true", help="使用独立临时去重记录，不发送邮件或上传")
     args, _ = parser.parse_known_args(argv)
+    if args.test_mode and args.fresh_start:
+        parser.error("--test-mode cannot be combined with --fresh-start")
 
     logger = get_logger()
     start_time = time.time()
@@ -326,7 +330,12 @@ def main(argv=None):
         log_stage(1, 5, "加载配置与初始化去重追踪器")
         config = load_config(args.config)
         logger.info(f"成功加载 {len(config.body)} 个内容源配置")
-        tracker = DedupTracker()
+        if args.test_mode:
+            import tempfile
+            test_dir = tempfile.TemporaryDirectory(prefix="oughtgather-test-")
+            tracker = DedupTracker(data_file=os.path.join(test_dir.name, "dedup.txt"))
+        else:
+            tracker = DedupTracker()
         dedup_start_count = tracker.get_stats()["total_fetched"]
 
         # ------------------------------------------------------------------
@@ -334,11 +343,13 @@ def main(argv=None):
         # ------------------------------------------------------------------
         if args.fresh_start:
             log_stage(2, 5, "执行 Fresh Start 全量标记去重记录")
-            tracker.clear()
+            tracker.clear(persist=False)
 
-            _run_parallel_tasks(
+            fresh_results = _run_parallel_tasks(
                 config.body, lambda source: _fresh_start_task(source, tracker)
             )
+            if any(not result.success for _, result, _ in fresh_results):
+                raise RuntimeError("Fresh Start failed for one or more sources; existing cache was not replaced")
 
             tracker.save()
             stats = tracker.get_stats()
@@ -364,6 +375,19 @@ def main(argv=None):
             if not result.success:
                 error_log.append(f"[{source.type}] {source.src}: {result.error}")
 
+        # Write the report before EPUB generation so it survives delivery failures.
+        import json
+        os.makedirs("output", exist_ok=True)
+        report = []
+        for result in results:
+            report.extend(result.quality_report)
+            if not result.success and not result.quality_report:
+                report.append({"title": "", "source": result.source.title or result.source.src,
+                               "url": "", "language": None, "method": "source",
+                               "text_length": 0, "status": "failed", "reason": result.error or "source_failed"})
+        with open("output/quality-report.json", "w", encoding="utf-8") as report_file:
+            json.dump(report, report_file, ensure_ascii=False, indent=2)
+
         # 3. 处理结果（去重、内容过滤处理）
         log_stage(3, 5, "去重与内容过滤处理")
         processed_results = process_results(results, tracker)
@@ -380,9 +404,12 @@ def main(argv=None):
             log_stage(5, 5, "推送分发与保存记录")
             logger.info("正在发送 EPUB 至 Kindle 邮箱...")
             try:
-                sender = SMTPSender()
+                if args.test_mode:
+                    logger.info("Test mode: email delivery disabled")
+                else:
+                    sender = SMTPSender()
                 subject = config.title.get_plain_text()
-                if not sender.send_epub(epub_path, subject):
+                if not args.test_mode and not sender.send_epub(epub_path, subject):
                     logger.error("发送邮件失败: SMTP sender returned False")
                     error_log.append("Email sending failed: sender returned False")
             except Exception as e:
@@ -392,8 +419,8 @@ def main(argv=None):
             logger.info("正在上传 EPUB 至 WebDAV...")
             try:
                 from src.uploader.webdav_uploader import WebDavUploader
-                uploader = WebDavUploader()
-                uploaded = uploader.upload_epub(epub_path)
+                uploader = WebDavUploader() if not args.test_mode else None
+                uploaded = uploader.upload_epub(epub_path) if uploader else False
                 if uploaded:
                     logger.info("EPUB 成功上传至 WebDAV")
                 elif getattr(getattr(uploader, "config", None), "enabled", False):
