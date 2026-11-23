@@ -38,8 +38,9 @@ def selection_schema(group_ids, candidate_ids):
 
 
 class ProviderError(Exception):
-    def __init__(self, category, status=None, retry_after=0, usage=None):
+    def __init__(self, category, status=None, retry_after=0, usage=None, response_status=None):
         self.category, self.status, self.retry_after, self.usage = category, status, retry_after, usage
+        self.response_status = response_status
         super().__init__(category)
 
 
@@ -80,17 +81,18 @@ class DeepSeekClient:
             data = response.json()
             if not isinstance(data, dict):
                 raise ProviderError('invalid_response')
+            state = data.get('status')
+            safe_state = state if state in ('completed', 'incomplete', 'failed') else 'unknown'
             raw_usage = data.get('usage')
             usage = None
             if raw_usage is not None:
                 names = ('input_tokens', 'output_tokens', 'total_tokens')
                 if not isinstance(raw_usage, dict) or any(type(raw_usage.get(x)) is not int or raw_usage[x] < 0 for x in names):
-                    raise ProviderError('invalid_usage')
+                    raise ProviderError('invalid_usage', response_status=safe_state)
                 if raw_usage['total_tokens'] != raw_usage['input_tokens'] + raw_usage['output_tokens']:
-                    raise ProviderError('invalid_usage')
+                    raise ProviderError('invalid_usage', response_status=safe_state)
                 usage = {'prompt_tokens': raw_usage['input_tokens'], 'completion_tokens': raw_usage['output_tokens'],
                          'total_tokens': raw_usage['total_tokens']}
-            state = data.get('status')
             if state == 'incomplete':
                 detail = data.get('incomplete_details')
                 reason = detail.get('reason') if isinstance(detail, dict) else None
@@ -101,7 +103,7 @@ class DeepSeekClient:
             if state != 'completed':
                 raise ProviderError('invalid_response', usage=usage)
             if usage is None:
-                raise ProviderError('invalid_usage')
+                raise ProviderError('invalid_usage', response_status=safe_state)
             output = data.get('output')
             if not isinstance(output, list):
                 raise ProviderError('missing_output_text', usage=usage)

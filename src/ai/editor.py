@@ -24,7 +24,7 @@ class StageFailure(Exception):
 
 
 class Budget:
-    """Reserve conservatively before every call, refund only known usage."""
+    """Reserve before every request; retain worst-case cost when usage is unknown."""
     def __init__(self, report, started):
         self.report = report
         self.max_calls = setting('AI_MAX_CALLS_PER_RUN', 6, 100)
@@ -38,61 +38,145 @@ class Budget:
     def estimate(payload):
         return len(json.dumps(payload, ensure_ascii=False).encode('utf8')) + 1024
 
-    def fits(self, payload, output):
+    def limit(self, payload, output, reserve_input=0, reserve_output=0):
         estimate = self.estimate(payload)
-        return (self.reserved_input + estimate <= self.max_input and
-                self.reserved_output + output <= self.max_output and
-                self.reserved_input + self.reserved_output + estimate + output <= self.max_total)
+        for name, used, reservation, ceiling, actual in (
+            ('input', self.reserved_input, estimate + reserve_input, self.max_input, self.report['prompt_tokens']),
+            ('output', self.reserved_output, output + reserve_output, self.max_output, self.report['completion_tokens']),
+            ('total', self.reserved_input + self.reserved_output, estimate + output + reserve_input + reserve_output,
+             self.max_total, self.report['total_tokens']),
+        ):
+            if used + reservation > ceiling:
+                return {'resource': name, 'basis': 'actual_usage' if actual >= ceiling else 'reservation'}
+        return None
+
+    def fits(self, payload, output, reserve_input=0, reserve_output=0):
+        return self.limit(payload, output, reserve_input, reserve_output) is None
 
     def account(self, usage, estimate, output):
         for field in ('prompt_tokens', 'completion_tokens', 'total_tokens'):
             self.report[field] += usage[field]
         self.reserved_input += usage['prompt_tokens'] - estimate
         self.reserved_output += usage['completion_tokens'] - output
-        if (self.report['prompt_tokens'] > self.max_input or self.report['completion_tokens'] > self.max_output
-                or self.report['total_tokens'] > self.max_total):
-            raise StageFailure('budget_exhausted')
+        for name, field, ceiling in (('input','prompt_tokens',self.max_input), ('output','completion_tokens',self.max_output),
+                                     ('total','total_tokens',self.max_total)):
+            if self.report[field] > ceiling:
+                self.report['budget_limit_hit'] = {'resource': name, 'basis': 'actual_usage'}
+                self.report['retry_blocked_reason'] = 'actual_usage_limit'
+                raise StageFailure('budget_exhausted')
 
-    def request(self, client, payload, output, validate):
-        estimate = self.estimate(payload)
+    def selection_reserve(self, group_minimum, group_output, selection_minimum, selection_output):
+        """Reserve the full singleton selection if feasible, otherwise a safe share.
+
+        The minimum grouping request is never excluded solely by future headroom;
+        actual provider usage can refund the difference before selection.
+        """
+        group_size = self.estimate(group_minimum)
+        free_input = max(0, self.max_input - self.reserved_input - group_size)
+        free_output = max(0, self.max_output - self.reserved_output - group_output)
+        free_total = max(0, self.max_total - self.reserved_input - self.reserved_output - group_size - group_output)
+        protect_output = min(selection_output, free_output, free_total)
+        protect_input = min(selection_minimum, free_input, max(0, free_total - protect_output))
+        return protect_input, protect_output
+
+    def request(self, client, build, output, validate, stage, future=None):
+        previous_limit = 600
         for attempt in range(2):
             remaining = self.deadline - time.monotonic()
             if remaining <= 0:
+                if attempt:
+                    self.report['retry_blocked_reason'] = 'deadline'
                 raise StageFailure('timeout')
-            if self.report['api_calls'] >= self.max_calls or not self.fits(payload, output):
+            if self.report['api_calls'] >= self.max_calls:
+                self.report['budget_limit_hit'] = {'resource': 'calls', 'basis': 'actual_usage'}
+                if attempt:
+                    self.report['retry_blocked_reason'] = 'call_limit'
                 raise StageFailure('budget_exhausted')
+            minimum = build(0)
+            reserve_input = reserve_output = 0
+            if future:
+                reserve_input, reserve_output = self.selection_reserve(minimum, output, *future)
+                # Protect one minimum-size retry only when all reservations fit.
+                minimum_size = self.estimate(minimum)
+                if (attempt == 0 and self.max_calls - self.report['api_calls'] >= 3 and
+                        self.fits(minimum, output, reserve_input + minimum_size, reserve_output + output)):
+                    reserve_input += minimum_size
+                    reserve_output += output
+            max_excerpt = previous_limit if attempt == 0 else previous_limit // 2
+            try:
+                payload, previous_limit = fit_payload(build, self, output, reserve_input, reserve_output, max_excerpt)
+            except StageFailure:
+                hit = self.limit(minimum, output, reserve_input, reserve_output)
+                self.report['budget_limit_hit'] = hit or {'resource': 'input', 'basis': 'reservation'}
+                if attempt:
+                    self.report['retry_blocked_reason'] = ('actual_usage_limit' if self.report['budget_limit_hit']['basis'] == 'actual_usage' else 'reservation_insufficient')
+                raise
+            estimate = self.estimate(payload)
+            remaining = self.deadline - time.monotonic()
+            if remaining <= 0:
+                if attempt:
+                    self.report['retry_blocked_reason'] = 'deadline'
+                raise StageFailure('timeout')
+            if attempt:
+                self.report['retry_attempted'] = True
             self.report['api_calls'] += 1
+            self.report['stage_api_calls'][stage] += 1
             self.reserved_input += estimate
             self.reserved_output += output
             try:
                 data, usage = client.analyze_batch(payload, remaining)
                 self.account(usage, estimate, output)
+                self.report['last_response_status'] = 'completed'
                 try:
                     return validate(data)
                 except (ValueError, TypeError, KeyError):
+                    self.report['last_attempt_error_category'] = 'local_validation'
+                    self.report['last_error_response_status'] = 'completed'
                     if attempt:
+                        self.report['retry_blocked_reason'] = 'retry_limit'
                         raise StageFailure('invalid_model_output') from None
             except ProviderError as exc:
                 if exc.usage is not None:
                     self.account(exc.usage, estimate, output)
-                retryable = (exc.category in ('timeout','response_incomplete_max_tokens','missing_output_text',
-                                               'invalid_structured_output','invalid_response') or
-                             (exc.category == 'http' and exc.status in (429,500,502,503,504)))
-                if not retryable or attempt or time.monotonic() + exc.retry_after >= self.deadline:
-                    raise StageFailure(exc.category) from None
+                category = exc.category
+                if category in ('invalid_structured_output', 'missing_output_text'):
+                    self.report['last_response_status'] = 'completed'
+                    self.report['last_attempt_error_category'] = 'json_parse' if category == 'invalid_structured_output' else 'missing_output_text'
+                elif category.startswith('response_incomplete_'):
+                    self.report['last_response_status'] = 'incomplete'
+                    self.report['last_attempt_error_category'] = category
+                elif category == 'response_failed':
+                    self.report['last_response_status'] = 'failed'
+                    self.report['last_attempt_error_category'] = 'provider_failed'
+                else:
+                    self.report['last_response_status'] = (exc.response_status or
+                                                           ('http_error' if category == 'http' else 'not_received'))
+                    safe_categories = {'timeout', 'invalid_response', 'invalid_usage'}
+                    self.report['last_attempt_error_category'] = ('provider_http' if category == 'http' else
+                                                                  category if category in safe_categories else 'provider_error')
+                self.report['last_error_response_status'] = self.report['last_response_status']
+                retryable = (category in ('timeout','response_incomplete_max_tokens','missing_output_text',
+                                           'invalid_structured_output','invalid_response') or
+                             (category == 'http' and exc.status in (429,500,502,503,504)))
+                if not retryable or attempt:
+                    self.report['retry_blocked_reason'] = 'retry_limit' if attempt else 'non_retryable'
+                    raise StageFailure(category) from None
+                if time.monotonic() + exc.retry_after >= self.deadline:
+                    self.report['retry_blocked_reason'] = 'deadline'
+                    raise StageFailure(category) from None
                 if exc.retry_after:
                     time.sleep(exc.retry_after)
         raise StageFailure('invalid_model_output')
 
 
-def fit_payload(build, budget, output):
-    """Uniformly shorten excerpts if necessary, never drop a candidate."""
-    lo, hi, best = 0, 600, None
+def fit_payload(build, budget, output, reserve_input=0, reserve_output=0, max_excerpt=600):
+    """Shorten excerpts to leave explicit stage/retry headroom; never drop candidates."""
+    lo, hi, best = 0, max_excerpt, None
     while lo <= hi:
         middle = (lo + hi) // 2
         payload = build(middle)
-        if budget.fits(payload, output):
-            best, lo = payload, middle + 1
+        if budget.fits(payload, output, reserve_input, reserve_output):
+            best, lo = (payload, middle), middle + 1
         else:
             hi = middle - 1
     if best is None:
@@ -124,7 +208,11 @@ def run(candidates, client=None):
               'topic_count': 0, 'multi_article_topic_count': 0, 'topic_grouping_status': 'not_started',
               'topic_selection_status': 'not_started', 'selected_topic_count': 0, 'selected_article_count': 0,
               'max_articles_per_topic': 0, 'duplicate_candidates_grouped': 0, 'ai_recommended': [],
-              'topic_groups': [], 'traditional_selected': [], 'agreement': [], 'ai_only': [], 'traditional_only': []}
+              'topic_groups': [], 'traditional_selected': [], 'agreement': [], 'ai_only': [], 'traditional_only': [],
+              'failed_stage': None, 'last_attempt_error_category': None, 'last_response_status': 'not_received',
+              'last_error_response_status': None,
+              'retry_attempted': False, 'retry_blocked_reason': None, 'budget_limit_hit': None,
+              'stage_api_calls': {'topic_grouping': 0, 'topic_selection': 0}}
     if mode != 'shadow':
         return report
     key = os.getenv('DEEPSEEK_API_KEY', '')
@@ -152,8 +240,14 @@ def run(candidates, client=None):
         group_output = max(256, len(short_candidates) * 20)
         def grouping_input(limit):
             return [{**row, 'rss_excerpt': (row.get('rss_excerpt') or '')[:limit]} for row in short_candidates]
-        payload = fit_payload(lambda n: client.grouping_payload(grouping_input(n), group_output), budget, group_output)
-        groups = budget.request(client, payload, group_output, lambda data: validate_groups(data, short_to_real))
+        group_build = lambda n: client.grouping_payload(grouping_input(n), group_output)
+        # A singleton group for each candidate is a conservative upper bound on
+        # the fixed (zero-excerpt) selection structure before grouping is known.
+        minimum_selection = [{'group_id': f'g{i:03d}', 'candidates': [{**row, 'rss_excerpt': ''}]}
+                             for i, row in enumerate(short_candidates, 1)]
+        selection_minimum = budget.estimate(client.selection_payload(minimum_selection, provider_safe(profile), 800))
+        groups = budget.request(client, group_build, group_output, lambda data: validate_groups(data, short_to_real),
+                                'topic_grouping', future=(selection_minimum, 800))
         report['topic_grouping_status'] = 'ok'
         report['topic_count'] = len(groups)
         report['multi_article_topic_count'] = sum(len(g['members']) > 1 for g in groups)
@@ -177,8 +271,9 @@ def run(candidates, client=None):
             return [{'group_id': real_to_group_short[g['group_id']],
                      'candidates': [{**by_short[real_to_short[c]], 'rss_excerpt': (by_short[real_to_short[c]].get('rss_excerpt') or '')[:limit]}
                                     for c in g['members']]} for g in groups]
-        payload = fit_payload(lambda n: client.selection_payload(selection_input(n), provider_safe(profile), select_output), budget, select_output)
-        selected = budget.request(client, payload, select_output, lambda data: validate_selection(data, provider_members))
+        select_build = lambda n: client.selection_payload(selection_input(n), provider_safe(profile), select_output)
+        selected = budget.request(client, select_build, select_output, lambda data: validate_selection(data, provider_members),
+                                  'topic_selection')
         selected_real = [(group_short_to_real[group], short_to_real[cid]) for group, cid in selected]
         report['topic_selection_status'] = 'ok'
         report['ai_recommended'] = [cid for _, cid in selected_real]
@@ -194,10 +289,10 @@ def run(candidates, client=None):
         report['ai_only'] = [cid for cid in report['ai_recommended'] if cid not in traditional]
         report['traditional_only'] = [cid for cid in traditional if cid not in report['ai_recommended']]
     except StageFailure as exc:
-        report.update(status='degraded', fallback_reason=exc.reason)
+        report.update(status='degraded', fallback_reason=exc.reason, failed_stage=stage)
         report[stage + '_status'] = 'failed'
     except Exception:
-        report.update(status='degraded', fallback_reason='internal_error')
+        report.update(status='degraded', fallback_reason='internal_error', failed_stage=stage)
         report[stage + '_status'] = 'failed'
     try:
         in_price = float(os.environ['AI_INPUT_PRICE_PER_MILLION'])

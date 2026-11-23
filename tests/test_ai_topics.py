@@ -257,6 +257,7 @@ def test_incomplete_response_refunds_known_usage_and_retries():
     report=run(samples(3),client_for(handler))
     assert calls == ['topic_grouping','topic_grouping','topic_selection']
     assert report['status']=='ok' and report['api_calls']==3
+    assert report['last_response_status']=='completed' and report['last_error_response_status']=='incomplete'
     assert (report['prompt_tokens'],report['completion_tokens'],report['total_tokens']) == (40,50,90)
 
 
