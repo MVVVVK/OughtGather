@@ -116,7 +116,7 @@ jobs:
 
       - name: Run Ought Gather
         env:
-          AI_EDITOR_MODE: ${{ inputs.ai_editor_mode_override == 'shadow' && 'shadow' || inputs.ai_editor_mode_override == 'off' && 'off' || vars.AI_EDITOR_MODE || 'off' }}
+          AI_EDITOR_MODE: ${{ github.event_name == 'schedule' && 'shadow' || inputs.ai_editor_mode_override == 'shadow' && 'shadow' || inputs.ai_editor_mode_override == 'off' && 'off' || vars.AI_EDITOR_MODE || 'off' }}
           AI_TEST_OVERRIDE: ${{ inputs.run_ai_shadow }}
           AI_MAX_CANDIDATES: ${{ vars.AI_MAX_CANDIDATES }}
           AI_MAX_EXCERPT_CHARS: ${{ vars.AI_MAX_EXCERPT_CHARS }}
@@ -175,7 +175,7 @@ jobs:
         if: ${{ success() && (!inputs.test_mode || inputs.run_ai_shadow) }}
         continue-on-error: true
         env:
-          AI_EDITOR_MODE: ${{ inputs.ai_editor_mode_override == 'shadow' && 'shadow' || inputs.ai_editor_mode_override == 'off' && 'off' || vars.AI_EDITOR_MODE || 'off' }}
+          AI_EDITOR_MODE: ${{ github.event_name == 'schedule' && 'shadow' || inputs.ai_editor_mode_override == 'shadow' && 'shadow' || inputs.ai_editor_mode_override == 'off' && 'off' || vars.AI_EDITOR_MODE || 'off' }}
           DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
           AI_MEMORY_KEY: ${{ secrets.AI_MEMORY_KEY }}
           WEBDAV_ENABLED: "true"
