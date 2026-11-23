@@ -3,6 +3,7 @@
 import os
 import tempfile
 import threading
+import time
 from typing import Dict, Iterable, Set
 
 from src.utils.helpers import generate_content_id
@@ -27,6 +28,8 @@ class DedupTracker:
         self._session_snapshot_added = 0
         self._session_snapshot_removed = 0
         self._lock = threading.Lock()
+        self.retry_records = {}  # (source, URL hash) -> (attempts, last attempt UTC epoch)
+        self._dirty = False
         self._load()
 
     @staticmethod
@@ -49,7 +52,14 @@ class DedupTracker:
                         continue
                     if "\t" not in line:
                         raise ValueError("dedup file contains an unsupported legacy record")
-                    source_key, content_id = line.split("\t", 1)
+                    parts = line.split("\t")
+                    if parts[0] == "@retry" and len(parts) == 5:
+                        _, source_key, content_id, count, last = parts
+                        self.retry_records[(source_key, content_id)] = (int(count), float(last))
+                        continue
+                    if len(parts) != 2:
+                        raise ValueError("unsupported dedup record")
+                    source_key, content_id = parts
                     if source_key and content_id:
                         self.source_ids.setdefault(source_key, set()).add(content_id)
                         loaded += 1
@@ -60,12 +70,51 @@ class DedupTracker:
             )
         except Exception as e:
             self.logger.exception(f"去重记录加载失败: {e}")
+            raise
 
     def is_fetched(self, url: str, source_key: str) -> bool:
         if not url:
             return False
         with self._lock:
             return generate_content_id(url) in self.source_ids.get(source_key, set())
+
+    def retry_status(self, url, source_key, now=None):
+        """Return None, retry_cooldown, or retry_exhausted for a failed item."""
+        with self._lock:
+            record = self.retry_records.get((source_key, generate_content_id(url)))
+        if not record:
+            return None
+        count, last = record
+        if count >= 3:
+            return "retry_exhausted"
+        if (time.time() if now is None else now) - last < 86400:
+            return "retry_cooldown"
+        return None
+
+    def retry_count(self, url, source_key):
+        with self._lock:
+            return self.retry_records.get((source_key, generate_content_id(url)), (0, 0))[0]
+
+    def record_failure(self, url, source_key, now=None):
+        if not url:
+            return
+        key = (source_key, generate_content_id(url))
+        with self._lock:
+            count, _ = self.retry_records.get(key, (0, 0))
+            self.retry_records[key] = (min(count + 1, 3), time.time() if now is None else now)
+            self._dirty = True
+
+    def clear_retry(self, url, source_key):
+        key = (source_key, generate_content_id(url))
+        with self._lock:
+            if self.retry_records.pop(key, None) is not None:
+                self._dirty = True
+
+    def reset_retries(self):
+        with self._lock:
+            if self.retry_records:
+                self.retry_records.clear()
+                self._dirty = True
 
     def mark_as_fetched(self, url: str, source_key: str):
         if not url:
@@ -111,7 +160,7 @@ class DedupTracker:
 
     def save(self):
         with self._lock:
-            if not self._pending_snapshots and not self.new_ids:
+            if not self._pending_snapshots and not self.new_ids and not self._dirty:
                 self.logger.info("No new content to save")
                 return
             for source_key, ids in self._pending_snapshots.items():
@@ -121,6 +170,7 @@ class DedupTracker:
             self._pending_snapshot_stats.clear()
             self._refresh_fetched_ids()
             snapshot = {key: set(ids) for key, ids in self.source_ids.items() if ids}
+            retries = dict(self.retry_records)
 
         try:
             directory = os.path.dirname(self.data_file) or "."
@@ -131,21 +181,27 @@ class DedupTracker:
                     for source_key, ids in snapshot.items():
                         for content_id in sorted(ids):
                             f.write(f"{source_key}\t{content_id}\n")
+                    for (source_key, content_id), (count, last) in sorted(retries.items()):
+                        f.write(f"@retry\t{source_key}\t{content_id}\t{count}\t{last}\n")
                 os.replace(temp_path, self.data_file)
             finally:
                 if os.path.exists(temp_path):
                     os.unlink(temp_path)
             with self._lock:
                 self.new_ids.clear()
+                self._dirty = False
             self.logger.info(
                 f"去重数据库保存完成: 当前={sum(len(ids) for ids in snapshot.values())} 条"
             )
         except Exception as e:
             self.logger.exception(f"去重数据库保存失败: {e}")
+            raise
 
     def clear(self, persist=True):
         with self._lock:
             self.source_ids.clear()
+            self.retry_records.clear()
+            self._dirty = True
             self._pending_snapshots.clear()
             self._pending_snapshot_stats.clear()
             self.fetched_ids.clear()

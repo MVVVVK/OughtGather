@@ -129,7 +129,9 @@
 
 每次常规抓取的 `quality-report` artifact 包含逐篇 `quality-report.json` 和来源统计 `quality-sources.json`。后者的 `rss_returned` 是 feed 原始条数（获取失败时为 null），`historical_dedup` 是上一快照过滤数，`candidates` 是标题过滤和历史去重后的候选数；`full_text`、`rss_content`、`summary` 和 `selected` 是最终入选数，`rejected` 不含历史去重或配额截断，`quota_limited` 单独统计配额截断。逐篇记录的 `included` 反映最终入选情况；未检查正文的媒体候选可能因配额排除，并带有 `media_candidate` 标记。报告包含来源及文章 URL，分享前请检查 URL 中是否有私密参数。
 
-去重仍使用 feed 的完整候选快照，包括因配额未抓取的条目；下一次这些条目可能被历史去重过滤。测试时可使用 Daily Gather 的 `test_mode` 隔离正式去重记录。
+普通 RSS 仅在 EPUB 成功生成后记录实际出版的正文或摘要；因配额未处理的条目可在以后运行中继续参与筛选。失败重试和历史缓存迁移见 [去重文档](DEDUP.md)。测试时可使用 Daily Gather 的 `test_mode` 隔离正式去重记录。
+
+来源报告另含 `rss_success`、`http_status`、`parse_error`、`fetched_at`、`feed_updated`、`latest_published`、`stale_warning`、文字和媒体候选数、尝试与质量通过数、失败数及跳过原因。时间为带时区 ISO 8601；抓取时间、feed 更新时间和文章发布时间分别记录。最新文章超过 30 天会提示可能停更；缺少发布时间时不猜测。
 
 ---
 

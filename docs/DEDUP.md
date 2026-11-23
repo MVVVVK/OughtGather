@@ -1,92 +1,25 @@
-# 去重模块说明
+# 去重与重试
 
-## 目的
+## RSS 的生命周期
 
-去重模块避免同一内容源在连续抓取中重复推送文章。当前实现按内容源保存 URL 的 hash 快照，而不是维护一个永久增长的全局历史列表。
+RSS 每次先发现 feed 条目，再按标题、已有历史、失败冷却和配置选出候选，之后抓取正文并进行质量检查与内容处理。发现、进入候选、尝试抓取、通过质量检查和实际出版是不同阶段。
 
-## Source 标识
+正常运行中，RSS **仅在 EPUB 生成成功之后**将实际收入 EPUB 且有合格正文或摘要的文章加入出版历史。配额未处理、标题或媒体过滤、正文失败的文章不会因为出现在 feed 中而进入出版历史；生成 EPUB 失败也不会提交出版记录。只有元信息的失败条目可以收入一次 EPUB，但仍保留受限重试的机会，后续失败时不会重复刊登元信息。成功获得正文或摘要后再次收入 EPUB 并记录出版。非 RSS 抓取器继续使用原有快照机制。
 
-每个 source 的唯一标识由以下格式组成：
+失败文章在同一 source 下最多自动尝试 3 次，两次间隔至少 24 小时，超过次数后不再自动请求。手动运行 Daily Gather 时勾选 `retry_failed`，或本地使用 `python src/main.py --retry-failed`，可只重置失败计数，不删除已出版历史。配额未处理及策略过滤不消耗失败次数。`test_mode` 始终使用临时独立文件，不影响正式历史和失败计数。
 
-```text
-{source.type}:{source.src}
-```
+## 文件与旧缓存
 
-例如：
+继续使用 `data/fetched_urls.txt` 和原有 Actions 缓存键及迁移路径。原格式每行是 `{source.type}:{source.src}`、Tab、URL hash；新版本可直接读取。新写入的重试行是 `@retry`、source key、URL hash、尝试次数、UTC epoch（各字段用 Tab 分隔），不含原文 URL；这些行与已出版记录一起原子保存。旧版程序不能读取重试行，回退旧版前应先备份并移除这些行。
 
-```text
-rss:https://example.com/feed
-mail:namespace.tag
-```
-
-完全相同的 `type + src` 会共享同一个快照。
-
-## 文件格式
-
-默认文件为 `data/fetched_urls.txt`，每行包含 source key、Tab 和 URL hash：
-
-```text
-rss:https://example.com/feed\t2341951acb69b641d2a1af6ec3a053f3
-mail:namespace.tag\ta002c188d6596a00a73e44f97853dc09
-```
-
-旧版只有 hash、没有 source key 的文件不兼容，必须删除或重新执行 `--fresh-start`。
-
-## 生命周期
-
-### 正常抓取
-
-1. 初始化 `DedupTracker`，读取现有 source 快照。
-2. 抓取阶段使用上一轮快照过滤候选 URL。
-3. 抓取成功且返回非空结果时，调用 `stage_source_snapshot()` 暂存本轮完整 URL 集合。
-4. 内容处理阶段继续使用上一轮快照，避免本轮结果被自己判重。
-5. 主流程调用 `save()`，将暂存快照原子替换到文件中。
-
-### 空结果和失败
-
-- source 抓取失败：不提交快照，保留上一轮记录。
-- source 成功但返回空列表：不提交快照，保留上一轮记录。
-- source 返回非空列表：以本次返回的全部 URL 替换旧快照；本次没有返回的 URL 会被移除。
-
-### 两阶段抓取
-
-对于实现 `fetch_list()` / `fetch_items()` 的 fetcher，快照来自 `fetch_list()` 返回的全部候选 URL，包括因为本次 limit 没有进入全文抓取的候选。这样候选列表本身就是该 source 的最新可见结果集。
-
-## API 约定
-
-```python
-source_key = tracker.make_source_key(source)
-tracker.is_fetched(url, source_key)
-tracker.mark_as_fetched(url, source_key)
-tracker.stage_source_snapshot(source_key, urls)
-tracker.save()
-```
-
-- `is_fetched()` 和 `mark_as_fetched()` 必须传 source key。
-- `stage_source_snapshot()` 忽略空 URL；空集合不会覆盖旧快照。
-- `save()` 使用临时文件并替换正式文件，避免写入中断造成半个文件。
+旧版 RSS 快照只记录已发现的 URL，不能区分哪些曾出版、哪些只是因配额跳过。升级时保守地将旧记录都视为已处理，避免重复出版，因此不能自动恢复旧版本已误标的未处理文章；需在了解重复风险后使用 `test_mode` 检查或有意识地执行 Fresh Start。新规则不会自动清空旧记录。
 
 ## Fresh Start
 
-`python3.11 src/main.py --fresh-start` 会：
+手动 Fresh Start 特意把当前各去重来源的全部可见 URL 作为新基线，且不生成或发送 EPUB。所有来源成功后才原子替换记录并清除失败计数；任何来源失败保留原文件。即使新基线为空，也会成功写入空文件。Fresh Start 是显式初始化，与普通运行不同。
 
-- 清空现有去重快照；
-- 抓取每个启用去重的 source；
-- 写入当前 source 返回的全部 URL hash；
-- 不生成或发送 EPUB。
+## Actions 缓存
 
-执行后，下一次正常抓取会把这些 URL 视为已抓取。
+Daily Gather 与 Fresh Start 共用串行组，使用 `dedup-v2-<run_id>-<run_attempt>` 不可变键；Daily 通过前缀恢复最新创建的 v2 快照，成功后显式保存新键，首次迁移时回退到旧 `dedup-` 前缀。重复运行同一 workflow 时 `run_attempt` 会变化。缓存可能被 GitHub 淘汰；全部被淘汰后只能重新建立历史。
 
-## 相关代码
-
-- `src/dedup/tracker.py`：快照存储、查询、原子保存。
-- `src/main.py`：抓取时暂存快照、结果处理和 Fresh Start 流程。
-- `tests/test_dedup_tracker.py`：去重快照及主流程相关测试。
-
-## Actions 缓存与手动测试
-
-Daily Gather 与 Fresh Start 共用串行组，使用 `dedup-v2-<run_id>-<run_attempt>` 不可变键；Daily 通过前缀恢复最新创建的 v2 快照，成功后显式保存新键，首次迁移时回退到旧 `dedup-` 前缀。Fresh Start 成功后显式保存新快照，任一来源失败时不保存。重复运行同一 workflow 时 `run_attempt` 会变化，避免命中已有键而无法更新。缓存可能被 GitHub 淘汰，迁移后勿手动删除最新缓存；一旦全部被淘汰只能重新建立快照。
-
-GitHub 缓存受分支作用域限制：正式 Daily Gather 和 Fresh Start 必须在默认分支运行；从开发分支触发的缓存不能用于更新默认分支的历史。使用 Actions 页面选择 `main`，等待 Fresh Start 成功且保存缓存步骤成功后再运行 Daily Gather，并检查恢复步骤显示的缓存键。普通每日运行不会清空记录。
-
-Daily Gather 手动触发可勾选 `test_mode`（本地 `python src/main.py --test-mode`），使用空的临时去重文件，不保存 Actions 去重缓存，不发送邮件或 WebDAV；要限制测试规模，请在测试配置的来源 `metadata.limit` 或全局 `limit` 设置较小数值。该模式仍会生成 EPUB 和质量报告。
+GitHub 缓存受分支作用域限制：正式 Daily Gather 和 Fresh Start 应在默认分支运行。`test_mode` 使用空的临时去重文件，不保存 Actions 去重缓存，不发送邮件或 WebDAV。可通过测试配置中的 `metadata.limit` 或全局 `limit` 限制测试规模。
