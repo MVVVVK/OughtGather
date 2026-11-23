@@ -6,6 +6,7 @@ path, or opens deduplication state. It sends only fixed non-news test bytes.
 import argparse
 import json
 import os
+import re
 import sys
 import uuid
 from urllib.parse import unquote, urlsplit
@@ -15,9 +16,10 @@ import httpx
 
 
 class SmokeFailure(Exception):
-    def __init__(self, operation, reason):
+    def __init__(self, operation, reason, status=None):
         self.operation = operation
         self.reason = reason
+        self.status = status
         super().__init__(reason)
 
 
@@ -36,11 +38,17 @@ def run_smoke(url, client, *, authorized=False):
     if not authorized:
         raise ValueError('Explicit authorization is required')
     root = _root_url(url)
-    folder = 'oughtgather-smoke-' + uuid.uuid4().hex
-    directory = root + '/' + folder
-    source, moved, target = (directory + '/' + name for name in ('source.bin', 'moved.bin', 'destination.bin'))
-    result = {'success': False, 'directory': folder, 'operations': [], 'cleanup_errors': []}
+    parent = root + '/OughtGatherSmoke'
+    folder = 't-' + uuid.uuid4().hex[:12]
+    relative_path = 'OughtGatherSmoke/' + folder
+    directory = parent + '/' + folder
+    source, moved, target, put_target = (directory + '/' + name for name in ('move-source.bin', 'move-target.bin', 'destination.bin', 'put-overwrite.bin'))
+    result = {'success': False, 'directory': relative_path, 'operations': [],
+              'cleanup_actions': [], 'cleanup_errors': [], 'residual_path': None,
+              'capabilities': {name: {'supported': None, 'status': None, 'verified': False}
+                               for name in ('move_new', 'move_overwrite', 'put_overwrite')}}
     created = False
+    creation_attempted = False
     completed = False
 
     def request(label, method, address, allowed, **kwargs):
@@ -49,27 +57,63 @@ def run_smoke(url, client, *, authorized=False):
         except Exception as exc:
             raise SmokeFailure(label, 'request error: ' + type(exc).__name__) from exc
         code = response.status_code
+        capability = {'MOVE new': 'move_new', 'MOVE overwrite': 'move_overwrite',
+                      'PUT overwrite existing': 'put_overwrite'}.get(label)
+        if capability:
+            result['capabilities'][capability]['status'] = code
+            if code in (405, 501):
+                result['capabilities'][capability]['supported'] = False
         if code not in allowed:
             reason = f'HTTP {code}'
-            if code in (405, 501):
+            if code == 405:
+                reason += ' (operation not allowed or unsupported'
+                if method == 'MKCOL':
+                    reason += '; collection may already exist'
+                reason += ')'
+            elif code == 501:
                 reason += ' (operation unsupported)'
             elif code in (401, 403):
                 reason += ' (authentication or permission denied)'
-            raise SmokeFailure(label, reason)
+            raise SmokeFailure(label, reason, status=code)
         result['operations'].append({'operation': label, 'status': code, 'ok': True})
         return response
 
     def expect(label, condition):
         if not condition:
-            raise SmokeFailure(label, 'response verification failed')
+            last_status = result['operations'][-1]['status'] if result['operations'] else None
+            raise SmokeFailure(label, 'response verification failed', status=last_status)
 
     try:
+        listing = request('PROPFIND test parent', 'PROPFIND', parent + '/', (207,),
+                          headers={'Depth': '0', 'Content-Type': 'application/xml'},
+                          content=b'<d:propfind xmlns:d="DAV:"><d:prop><d:resourcetype/></d:prop></d:propfind>')
+        try:
+            root_xml = ElementTree.fromstring(listing.content)
+            expected = urlsplit(parent).path.rstrip('/')
+            parent_exists = any(
+                unquote(urlsplit(node.findtext('{DAV:}href', '')).path).rstrip('/') == expected
+                and any(re.search(r'\s2\d\d(?:\s|$)', prop.findtext('{DAV:}status', ''))
+                        and prop.find('{DAV:}prop/{DAV:}resourcetype/{DAV:}collection') is not None
+                        for prop in node.findall('{DAV:}propstat'))
+                for node in root_xml.findall('{DAV:}response')
+            )
+        except ElementTree.ParseError as exc:
+            raise SmokeFailure('PROPFIND test parent', 'invalid XML response') from exc
+        expect('PROPFIND test parent verification', parent_exists)
+        creation_attempted = True
         request('MKCOL', 'MKCOL', directory, (201,))
         created = True
         request('PUT source', 'PUT', source, (200, 201, 204), content=b'oughtgather smoke one')
         expect('GET source', request('GET source', 'GET', source, (200,)).content == b'oughtgather smoke one')
-        request('MOVE new', 'MOVE', source, (201, 204), headers={'Destination': moved, 'Overwrite': 'F'})
+        move = request('MOVE new', 'MOVE', source, (201, 204), headers={'Destination': moved, 'Overwrite': 'F'})
+        result['capabilities']['move_new']['status'] = move.status_code
         expect('GET moved', request('GET moved', 'GET', moved, (200,)).content == b'oughtgather smoke one')
+        source_check = request('GET source after MOVE new', 'GET', source, (200, 404))
+        result['capabilities']['move_new']['source_status'] = source_check.status_code
+        if source_check.status_code != 404:
+            result['capabilities']['move_new']['supported'] = False
+        expect('GET source after MOVE new', source_check.status_code == 404)
+        result['capabilities']['move_new'].update(supported=True, verified=True)
         request('PUT replacement', 'PUT', source, (200, 201, 204), content=b'oughtgather smoke two')
         request('PUT destination', 'PUT', target, (200, 201, 204), content=b'oughtgather old value')
         listing = request('PROPFIND', 'PROPFIND', directory + '/', (207,), headers={'Depth': '1'})
@@ -79,10 +123,31 @@ def run_smoke(url, client, *, authorized=False):
                      for el in listing_root.findall('.//{DAV:}href')}
         except ElementTree.ParseError as exc:
             raise SmokeFailure('PROPFIND', 'invalid XML response') from exc
-        expect('PROPFIND entries', {'source.bin', 'moved.bin', 'destination.bin'} <= names)
-        request('MOVE overwrite', 'MOVE', source, (201, 204), headers={'Destination': target, 'Overwrite': 'T'})
-        expect('GET overwritten', request('GET overwritten', 'GET', target, (200,)).content == b'oughtgather smoke two')
-        request('GET moved source', 'GET', source, (404,))
+        expect('PROPFIND entries', {'move-source.bin', 'move-target.bin', 'destination.bin'} <= names)
+        moved_overwrite = request('MOVE overwrite', 'MOVE', source, (201, 204, 409),
+                                  headers={'Destination': target, 'Overwrite': 'T'})
+        result['capabilities']['move_overwrite']['status'] = moved_overwrite.status_code
+        if moved_overwrite.status_code == 409:
+            result['operations'][-1].update(ok=False, reason='HTTP 409 (overwrite conflict)')
+            result['capabilities']['move_overwrite']['supported'] = False
+        else:
+            expect('GET overwritten', request('GET overwritten', 'GET', target, (200,)).content == b'oughtgather smoke two')
+            request('GET moved source', 'GET', source, (404,))
+            result['capabilities']['move_overwrite'].update(supported=True, verified=True)
+
+        request('PUT overwrite initial', 'PUT', put_target, (200, 201, 204), content=b'put version A')
+        expect('GET PUT initial', request('GET PUT initial', 'GET', put_target, (200,)).content == b'put version A')
+        put = request('PUT overwrite existing', 'PUT', put_target, (200, 201, 204), content=b'put version B')
+        result['capabilities']['put_overwrite']['status'] = put.status_code
+        put_verified = request('GET PUT overwritten', 'GET', put_target, (200,)).content == b'put version B'
+        result['capabilities']['put_overwrite']['supported'] = put_verified
+        expect('GET PUT overwritten', put_verified)
+        result['capabilities']['put_overwrite']['verified'] = True
+        if moved_overwrite.status_code == 409:
+            request('DELETE source after conflict', 'DELETE', source, (200, 204, 404))
+            request('GET deleted source', 'GET', source, (404,))
+        request('DELETE PUT target', 'DELETE', put_target, (200, 204))
+        request('GET deleted PUT target', 'GET', put_target, (404,))
         request('DELETE moved', 'DELETE', moved, (200, 204))
         request('GET deleted moved', 'GET', moved, (404,))
         request('DELETE destination', 'DELETE', target, (200, 204))
@@ -92,17 +157,37 @@ def run_smoke(url, client, *, authorized=False):
         completed = True
         result['success'] = True
     except SmokeFailure as exc:
-        result['operations'].append({'operation': exc.operation, 'ok': False, 'reason': exc.reason})
+        result['operations'].append({'operation': exc.operation, 'status': exc.status,
+                                     'ok': False, 'reason': exc.reason})
     finally:
         if created and not completed:
             # Only names in the collection created with HTTP 201 in this run.
-            for label, address in (('source', source), ('moved', moved), ('destination', target), ('collection', directory)):
+            for label, address in (('source', source), ('moved', moved), ('destination', target), ('put_target', put_target), ('collection', directory)):
                 try:
                     response = client.request('DELETE', address)
+                    action = {'item': label, 'status': response.status_code}
+                    result['cleanup_actions'].append(action)
                     if response.status_code not in (200, 204, 404):
-                        result['cleanup_errors'].append({'item': label, 'status': response.status_code})
+                        result['cleanup_errors'].append(action)
                 except Exception as exc:
-                    result['cleanup_errors'].append({'item': label, 'error': type(exc).__name__})
+                    action = {'item': label, 'status': None, 'error': type(exc).__name__}
+                    result['cleanup_actions'].append(action)
+                    result['cleanup_errors'].append(action)
+            try:
+                response = client.request('PROPFIND', directory + '/', headers={'Depth': '0'})
+                action = {'item': 'verify_collection_absent', 'status': response.status_code}
+                result['cleanup_actions'].append(action)
+                if response.status_code != 404:
+                    result['cleanup_errors'].append(action)
+            except Exception as exc:
+                action = {'item': 'verify_collection_absent', 'status': None, 'error': type(exc).__name__}
+                result['cleanup_actions'].append(action)
+                result['cleanup_errors'].append(action)
+            if result['cleanup_errors']:
+                result['residual_path'] = relative_path
+        elif creation_attempted and not created:
+            # A failed/ambiguous MKCOL does not establish ownership; do not delete it.
+            result['residual_path'] = relative_path
     return result
 
 
@@ -112,12 +197,19 @@ def main(argv=None):
     args = parser.parse_args(argv)
     if not args.authorize_isolated:
         parser.error('Explicit --authorize-isolated is required')
+    url = os.environ.get('WEBDAV_URL', '')
     try:
-        url = os.environ.get('WEBDAV_URL', '')
         _root_url(url)
-        username, password = os.environ.get('WEBDAV_USERNAME'), os.environ.get('WEBDAV_PASSWORD')
-        if not username or not password:
-            raise ValueError('WEBDAV_USERNAME and WEBDAV_PASSWORD are required')
+    except ValueError:
+        print(json.dumps({'success': False, 'error': 'configuration',
+                          'reason': 'WEBDAV_URL must be the HTTPS Jianguoyun /dav root'}))
+        return 1
+    username, password = os.environ.get('WEBDAV_USERNAME'), os.environ.get('WEBDAV_PASSWORD')
+    if not username or not password:
+        print(json.dumps({'success': False, 'error': 'configuration',
+                          'reason': 'WEBDAV_USERNAME and WEBDAV_PASSWORD are required'}))
+        return 1
+    try:
         with httpx.Client(auth=(username, password), timeout=15.0, follow_redirects=False) as client:
             report = run_smoke(url, client, authorized=True)
         print(json.dumps(report, ensure_ascii=False, indent=2))

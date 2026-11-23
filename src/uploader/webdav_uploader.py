@@ -37,10 +37,12 @@ class WebDavUploader:
                 code = response.status_code
                 if code in allowed:
                     return response
+                if code == 409:
+                    raise DeliveryError('conflict', f'{method} HTTP 409 conflict')
                 if code in (405, 501):
                     raise DeliveryError('unsupported', f'{method} is unsupported (HTTP {code})')
                 if code in (401, 403):
-                    raise DeliveryError('authentication', f'WebDAV HTTP {code}')
+                    raise DeliveryError('authentication', f'{method} HTTP {code} (authentication or permission denied)')
                 if code in (429, 500, 502, 503, 504):
                     if attempt < 2:
                         time.sleep(0.2 * 2 ** attempt)
@@ -50,7 +52,7 @@ class WebDavUploader:
                     raise DeliveryError('quota', 'WebDAV storage quota exceeded')
                 if 300 <= code < 400:
                     raise DeliveryError('redirect', 'WebDAV redirect refused')
-                raise DeliveryError('remote', f'WebDAV HTTP {code}')
+                raise DeliveryError('remote', f'{method} HTTP {code}')
             except httpx.TransportError as exc:
                 if attempt == 2:
                     raise DeliveryError('network', 'WebDAV connection failed') from exc
@@ -71,43 +73,68 @@ class WebDavUploader:
         self.archive = self.base + '/archive'
         self._ensure_collection(self.archive)
 
+    def _collection_exists(self, url):
+        """Only an explicit 404 proves absence; ambiguous responses fail closed."""
+        listing = self._request('PROPFIND', url + '/', headers={'Depth': '0', 'Content-Type': 'application/xml'},
+                                content=b'<d:propfind xmlns:d="DAV:"><d:prop><d:resourcetype/></d:prop></d:propfind>',
+                                allowed=(207, 404))
+        if listing.status_code == 404:
+            return False
+        try:
+            root = ElementTree.fromstring(listing.content)
+            expected = unquote(urlsplit(url).path).rstrip('/')
+            exists = any(
+                unquote(urlsplit(item.findtext('{DAV:}href', '')).path).rstrip('/') == expected
+                and any(re.search(r'\s2\d\d(?:\s|$)', prop.findtext('{DAV:}status', ''))
+                        and prop.find('{DAV:}prop/{DAV:}resourcetype/{DAV:}collection') is not None
+                        for prop in item.findall('{DAV:}propstat'))
+                for item in root.findall('{DAV:}response')
+            )
+        except ElementTree.ParseError as exc:
+            raise DeliveryError('remote', 'Invalid PROPFIND collection response') from exc
+        if not exists:
+            raise DeliveryError('remote', 'PROPFIND HTTP 207 did not confirm the requested collection')
+        return True
+
     def _ensure_collection(self, url):
-        response = self._request('MKCOL', url, allowed=(201, 405))
-        if response.status_code == 405:
-            # 405 can mean an existing directory or an unsupported MKCOL.
-            # A successful Depth: 0 listing confirms an accessible collection.
-            try:
-                listing = self._request('PROPFIND', url + '/', headers={'Depth': '0'}, allowed=(207,))
-            except DeliveryError as exc:
-                if exc.category == 'remote' and '404' in str(exc):
-                    raise DeliveryError('unsupported', 'MKCOL unavailable or collection is absent') from exc
-                raise
-            try:
-                root = ElementTree.fromstring(listing.content)
-                expected = unquote(urlsplit(url).path).rstrip('/')
-                exists = any(
-                    unquote(urlsplit(item.findtext('{DAV:}href', '')).path).rstrip('/') == expected
-                    and any(re.search(r'\s2\d\d(?:\s|$)', status.text or '')
-                            for status in item.findall('.//{DAV:}status'))
-                    for item in root.findall('{DAV:}response')
-                )
-            except ElementTree.ParseError as exc:
-                raise DeliveryError('remote', 'Invalid PROPFIND collection response') from exc
-            if not exists:
-                raise DeliveryError('unsupported', 'MKCOL unavailable or collection is absent')
+        if self._collection_exists(url):
+            return
+        result = self._request('MKCOL', url, allowed=(201, 405))
+        if result.status_code == 405:
+            # Another client may have created the directory after the 404.
+            if not self._collection_exists(url):
+                raise DeliveryError('unsupported', 'MKCOL HTTP 405; collection remains absent')
 
     def _read(self, url):
         response = self._request('GET', url, allowed=(200, 404))
         return None if response.status_code == 404 else response.content
 
+    def _put_verified(self, target, content):
+        """Direct PUT is used only for a confirmed 409 fallback or restoration."""
+        self._request('PUT', target, content=content)
+        if self._read(target) != content:
+            raise DeliveryError('verification', 'WebDAV PUT destination verification failed')
+
     def _write_verified(self, target, content, overwrite):
-        # Upload and verify a same-directory temporary file before the atomic MOVE.
+        """Stage and verify, then use MOVE; only a confirmed overwrite 409 allows PUT."""
+        existing = self._read(target)
+        if existing is not None and not overwrite:
+            raise DeliveryError('conflict', 'MOVE target already exists')
         temp = target.rsplit('/', 1)[0] + '/.oughtgather-' + uuid.uuid4().hex + '.tmp'
         try:
             self._request('PUT', temp, content=content)
             if self._read(temp) != content:
                 raise DeliveryError('verification', 'WebDAV staging verification failed')
-            self._request('MOVE', temp, headers={'Destination': target, 'Overwrite': 'T' if overwrite else 'F'})
+            replacing = existing is not None
+            response = self._request('MOVE', temp, allowed=(201, 204, 409),
+                                     headers={'Destination': target, 'Overwrite': 'T' if replacing else 'F'})
+            if response.status_code == 409:
+                if not replacing or self._read(target) is None:
+                    raise DeliveryError('conflict', 'MOVE HTTP 409; existing target not confirmed')
+                self._overwrite_fallbacks.append({'operation': 'MOVE overwrite', 'status': 409,
+                                                   'capability': 'overwrite_unsupported'})
+                self.logger.warning('WebDAV MOVE overwrite returned HTTP 409; using verified PUT')
+                self._put_verified(target, content)
         finally:
             try:
                 self._request('DELETE', temp, allowed=(200, 204, 404))
@@ -133,6 +160,8 @@ class WebDavUploader:
     def upload_epub(self, epub_path: str, edition: str = None) -> bool:
         self.last_error, self.last_result = None, {}
         self._cleanup_warning = None
+        self._overwrite_fallbacks = []
+        self._recovery_status = None
         if not self.config or not self.config.enabled:
             self.last_error = 'disabled'
             self.logger.info('WebDAV is not enabled, skip pushing.')
@@ -186,9 +215,12 @@ class WebDavUploader:
                         if previous is not None:
                             try:
                                 if self._read(latest) != previous:
-                                    self._write_verified(latest, previous, overwrite=True)
+                                    self._put_verified(latest, previous)
+                                    self._recovery_status = 'restored'
+                                else:
+                                    self._recovery_status = 'unchanged'
                             except DeliveryError:
-                                pass
+                                self._recovery_status = 'failed'
                         raise
                 cutoff = get_now().date() - timedelta(days=retention - 1)
                 cleanup_error = None
@@ -203,7 +235,7 @@ class WebDavUploader:
                         cleanup_error = exc.category
                         self._cleanup_warning = str(exc)
                         break
-                self.last_result = {'archive': edition, 'sha256': digest, 'latest_updated': update_latest, 'latest_edition': newest, 'cleanup_error': cleanup_error, 'cleanup_warning': self._cleanup_warning}
+                self.last_result = {'archive': edition, 'sha256': digest, 'latest_updated': update_latest, 'latest_edition': newest, 'cleanup_error': cleanup_error, 'cleanup_warning': self._cleanup_warning, 'overwrite_fallbacks': self._overwrite_fallbacks}
                 return True
             finally:
                 if owned:
@@ -217,7 +249,7 @@ class WebDavUploader:
             self.last_error = 'configuration'
         except DeliveryError as exc:
             self.last_error = exc.category
-            self.last_result = {'error_detail': str(exc)}
+            self.last_result = {'error_detail': str(exc), 'overwrite_fallbacks': self._overwrite_fallbacks, 'recovery': self._recovery_status}
         except httpx.HTTPError:
             self.last_error = 'network'
         self.logger.error('WebDAV delivery failed (%s)', self.last_error)

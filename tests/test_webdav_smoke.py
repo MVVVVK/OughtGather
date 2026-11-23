@@ -12,18 +12,26 @@ from src.uploader.webdav_uploader import WebDavUploader
 from tests.test_webdav_delivery import FakeDAV, edition
 
 ROOT = 'https://dav.jianguoyun.com/dav/'
+PARENT = '/dav/OughtGatherSmoke'
+
+
+def prepare_smoke(fake):
+    fake.dirs.add(PARENT)
+    return fake
 
 
 def test_success_only_touches_owned_isolated_collection():
-    fake = FakeDAV()
+    fake = prepare_smoke(FakeDAV())
     fake.files['/dav/DailyWorldBriefing/latest.epub'] = b'valuable'
     fake.dirs.add('/dav/DailyWorldBriefing')
     with httpx.Client(transport=httpx.MockTransport(fake), follow_redirects=False) as client, \
          patch('src.dedup.tracker.DedupTracker', side_effect=AssertionError('no dedup access')):
         report = run_smoke(ROOT, client, authorized=True)
     assert report['success'] is True and not report['cleanup_errors']
+    assert all(report['capabilities'][name]['verified'] for name in ('move_new', 'move_overwrite', 'put_overwrite'))
     assert fake.files['/dav/DailyWorldBriefing/latest.epub'] == b'valuable'
-    assert all(path.startswith('/dav/' + report['directory']) for _, path in fake.calls)
+    assert all(path.rstrip('/') == PARENT or path.startswith('/dav/' + report['directory']) for _, path in fake.calls)
+    assert not any(method in ('MKCOL', 'DELETE') and path.rstrip('/') in ('/dav', PARENT) for method, path in fake.calls)
     assert not any(path.startswith('/dav/' + report['directory']) for path in fake.files)
     assert [entry['operation'] for entry in report['operations'] if entry['operation'].startswith('MOVE')] == ['MOVE new', 'MOVE overwrite']
     assert any(entry['operation'] == 'PROPFIND deleted collection' for entry in report['operations'])
@@ -62,7 +70,7 @@ def test_unsupported_operation_reported_and_formal_latest_untouched(unsupported)
                 self.calls.append((request.method, request.url.path))
                 return httpx.Response(405)
             return super().__call__(request)
-    fake = Unsupported()
+    fake = prepare_smoke(Unsupported())
     fake.files['/dav/DailyWorldBriefing/latest.epub'] = b'old'
     with httpx.Client(transport=httpx.MockTransport(fake), follow_redirects=False) as client:
         report = run_smoke(ROOT, client, authorized=True)
@@ -70,7 +78,7 @@ def test_unsupported_operation_reported_and_formal_latest_untouched(unsupported)
     failed = [row for row in report['operations'] if not row['ok']]
     assert failed and 'unsupported' in failed[0]['reason']
     assert fake.files['/dav/DailyWorldBriefing/latest.epub'] == b'old'
-    assert all(path.startswith('/dav/' + report['directory']) for _, path in fake.calls)
+    assert all(path.rstrip('/') == PARENT or path.startswith('/dav/' + report['directory']) for _, path in fake.calls)
     if unsupported == 'DELETE':
         assert report['cleanup_errors']
 
@@ -82,11 +90,13 @@ def test_overwrite_move_unsupported_is_reported():
                 self.calls.append((request.method, request.url.path))
                 return httpx.Response(501)
             return super().__call__(request)
-    fake = NoOverwrite()
+    fake = prepare_smoke(NoOverwrite())
     with httpx.Client(transport=httpx.MockTransport(fake)) as client:
         result = run_smoke(ROOT, client, authorized=True)
     failure = next(row for row in result['operations'] if not row['ok'])
     assert failure['operation'] == 'MOVE overwrite' and '501' in failure['reason']
+    assert result['capabilities']['move_overwrite']['status'] == 501
+    assert result['capabilities']['move_overwrite']['supported'] is False
     assert not result['cleanup_errors']
 
 
@@ -204,3 +214,154 @@ def test_exception_details_never_enter_smoke_report():
     assert not report['success']
     assert 'RuntimeError' in report['operations'][0]['reason']
     assert 'sensitive-password' not in json.dumps(report)
+
+
+def test_missing_precreated_parent_stops_before_mkcol_and_delete():
+    fake = FakeDAV()
+    fake.files['/dav/DailyWorldBriefing/latest.epub'] = b'old'
+    with httpx.Client(transport=httpx.MockTransport(fake), follow_redirects=False) as client:
+        report = run_smoke(ROOT, client, authorized=True)
+    assert not report['success'] and report['operations'][0]['status'] == 404
+    assert report['operations'][0]['operation'] == 'PROPFIND test parent'
+    assert report['residual_path'] is None
+    assert not any(method in ('MKCOL', 'PUT', 'MOVE', 'DELETE') for method, _ in fake.calls)
+    assert fake.files['/dav/DailyWorldBriefing/latest.epub'] == b'old'
+
+
+def test_smoke_under_precreated_parent_with_root_mutations_rejected():
+    import re
+    class RootRestricted(FakeDAV):
+        def __call__(self, request):
+            path = request.url.path.rstrip('/')
+            if request.method in ('MKCOL', 'DELETE') and path.count('/') == 2:
+                self.calls.append((request.method, path))
+                return httpx.Response(400)
+            return super().__call__(request)
+    fake = prepare_smoke(RootRestricted())
+    fake.files['/dav/DailyWorldBriefing/latest.epub'] = b'old'
+    with httpx.Client(transport=httpx.MockTransport(fake), follow_redirects=False) as client:
+        report = run_smoke(ROOT, client, authorized=True)
+    assert report['success']
+    assert re.fullmatch(r'OughtGatherSmoke/t-[0-9a-f]{12}', report['directory'])
+    assert report['residual_path'] is None
+    assert not any(method in ('MKCOL', 'DELETE') and path.rstrip('/') in ('/dav', PARENT) for method, path in fake.calls)
+    assert PARENT in fake.dirs and fake.files['/dav/DailyWorldBriefing/latest.epub'] == b'old'
+
+
+def test_smoke_mkcol_400_reports_uncertain_path_without_deleting_it():
+    class FailMKCOL(FakeDAV):
+        def __call__(self, request):
+            if request.method == 'MKCOL':
+                self.calls.append((request.method, request.url.path))
+                return httpx.Response(400)
+            return super().__call__(request)
+    fake = prepare_smoke(FailMKCOL())
+    with httpx.Client(transport=httpx.MockTransport(fake), follow_redirects=False) as client:
+        report = run_smoke(ROOT, client, authorized=True)
+    failure = next(row for row in report['operations'] if not row['ok'])
+    assert failure['operation'] == 'MKCOL' and failure['status'] == 400
+    assert report['residual_path'] == report['directory'] and report['cleanup_actions'] == []
+    assert not any(method == 'DELETE' for method, _ in fake.calls)
+    assert PARENT in fake.dirs
+
+
+def test_smoke_failure_cleans_only_created_child_and_reports_statuses():
+    class FailPUT(FakeDAV):
+        def __call__(self, request):
+            if request.method == 'PUT':
+                self.calls.append((request.method, request.url.path))
+                return httpx.Response(403)
+            return super().__call__(request)
+    fake = prepare_smoke(FailPUT())
+    fake.files['/dav/DailyWorldBriefing/latest.epub'] = b'old'
+    with httpx.Client(transport=httpx.MockTransport(fake), follow_redirects=False) as client:
+        report = run_smoke(ROOT, client, authorized=True)
+    assert not report['success'] and not report['cleanup_errors']
+    assert report['residual_path'] is None
+    assert [row['status'] for row in report['cleanup_actions']] == [204, 204, 204, 204, 204, 404]
+    assert PARENT in fake.dirs and fake.files['/dav/DailyWorldBriefing/latest.epub'] == b'old'
+    assert all(path.startswith('/dav/' + report['directory']) for method, path in fake.calls if method == 'DELETE')
+
+
+def test_smoke_failed_cleanup_reports_residual_path():
+    class FailDelete(FakeDAV):
+        def __call__(self, request):
+            if request.method == 'DELETE':
+                self.calls.append((request.method, request.url.path))
+                return httpx.Response(403)
+            return super().__call__(request)
+    fake = prepare_smoke(FailDelete())
+    with httpx.Client(transport=httpx.MockTransport(fake), follow_redirects=False) as client:
+        report = run_smoke(ROOT, client, authorized=True)
+    assert report['residual_path'] == report['directory'] and report['cleanup_errors']
+    assert any(row['status'] == 403 for row in report['cleanup_errors'])
+    assert any(row['item'] == 'verify_collection_absent' for row in report['cleanup_errors'])
+    assert PARENT in fake.dirs
+
+
+def test_smoke_collision_never_cleans_unowned_subdirectory():
+    from types import SimpleNamespace
+    fake = prepare_smoke(FakeDAV())
+    path = PARENT + '/t-' + 'a' * 12
+    fake.dirs.add(path)
+    fake.files[path + '/valuable'] = b'keep'
+    with patch('src.uploader.webdav_smoke.uuid.uuid4', return_value=SimpleNamespace(hex='a' * 32)), \
+         httpx.Client(transport=httpx.MockTransport(fake), follow_redirects=False) as client:
+        report = run_smoke(ROOT, client, authorized=True)
+    assert not report['success'] and report['residual_path'] == report['directory']
+    assert report['operations'][-1]['status'] == 405
+    assert 'already exist' in report['operations'][-1]['reason']
+    assert not any(method == 'DELETE' for method, _ in fake.calls)
+    assert fake.files[path + '/valuable'] == b'keep'
+
+
+def test_smoke_checks_cleanup_when_server_does_not_remove_collection():
+    class LyingDelete(FakeDAV):
+        def __call__(self, request):
+            path = request.url.path.rstrip('/')
+            if request.method == 'PUT':
+                self.calls.append((request.method, request.url.path))
+                return httpx.Response(500)
+            if request.method == 'DELETE' and '/t-' in path and path.count('/') == 3:
+                self.calls.append((request.method, request.url.path))
+                return httpx.Response(204)
+            return super().__call__(request)
+    fake = prepare_smoke(LyingDelete())
+    with httpx.Client(transport=httpx.MockTransport(fake), follow_redirects=False) as client:
+        report = run_smoke(ROOT, client, authorized=True)
+    assert not report['success'] and report['residual_path'] == report['directory']
+    assert any(row['item'] == 'verify_collection_absent' and row['status'] == 207
+               for row in report['cleanup_errors'])
+    assert PARENT in fake.dirs
+
+
+def test_cli_invalid_root_reports_safe_actionable_configuration(monkeypatch, capsys):
+    monkeypatch.setenv('WEBDAV_URL', 'https://dav.jianguoyun.com/dav/DailyWorldBriefing')
+    monkeypatch.setenv('WEBDAV_USERNAME', 'test-user')
+    monkeypatch.setenv('WEBDAV_PASSWORD', 'sensitive-password')
+    with patch('src.uploader.webdav_smoke.httpx.Client') as client:
+        assert main(['--authorize-isolated']) == 1
+    client.assert_not_called()
+    output = capsys.readouterr().out
+    assert 'configuration' in output and 'Jianguoyun /dav root' in output
+    assert 'sensitive-password' not in output and 'test-user' not in output
+
+
+def test_smoke_parent_207_without_collection_never_mutates():
+    class ParentIsFile(FakeDAV):
+        def __call__(self, request):
+            if request.method == 'PROPFIND' and request.url.path.rstrip('/') == PARENT:
+                self.calls.append((request.method, request.url.path))
+                xml = ('<d:multistatus xmlns:d="DAV:"><d:response><d:href>' + PARENT +
+                       '</d:href><d:propstat><d:prop><d:resourcetype/></d:prop>'
+                       '<d:status>HTTP/1.1 200 OK</d:status></d:propstat></d:response></d:multistatus>')
+                return httpx.Response(207, text=xml)
+            return super().__call__(request)
+    fake = ParentIsFile()
+    fake.files['/dav/DailyWorldBriefing/latest.epub'] = b'old'
+    with httpx.Client(transport=httpx.MockTransport(fake), follow_redirects=False) as client:
+        report = run_smoke(ROOT, client, authorized=True)
+    assert not report['success'] and report['operations'][-1]['status'] == 207
+    assert 'verification failed' in report['operations'][-1]['reason']
+    assert not any(method in ('MKCOL', 'PUT', 'MOVE', 'DELETE') for method, _ in fake.calls)
+    assert fake.files['/dav/DailyWorldBriefing/latest.epub'] == b'old'
