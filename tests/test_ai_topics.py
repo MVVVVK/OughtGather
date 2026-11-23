@@ -59,6 +59,9 @@ def test_200_global_grouping_and_unique_representatives():
             assert all('traditional_selected' not in c and 'url' not in c for c in sent)
             assert payload['text']['format']['schema']['properties']['groups']['items']['properties']['members']['items']['enum'] == [f'c{i:03}' for i in range(1,201)]
             result = {'groups':[{'members':[f'c{i:03}' for i in range(a,b)]} for a,b in ((1,7),(7,12),(12,15))]}
+        elif name == 'topic_audit':
+            assert len(data['groups']) == 3
+            result = {'splits': []}
         else:
             assert name == 'topic_selection' and len(data['groups']) == 189
             assert 'review the entire shortlist' in payload['instructions'].lower()
@@ -68,7 +71,7 @@ def test_200_global_grouping_and_unique_representatives():
         return httpx.Response(200, json=response(result))
     first = run(source, client_for(handler))
     second = run(source, client_for(handler))
-    assert calls == ['topic_grouping','topic_selection'] * 2
+    assert calls == ['topic_grouping','topic_audit','topic_selection'] * 2
     assert first['status'] == 'ok' and first['topic_grouping_status'] == first['topic_selection_status'] == 'ok'
     assert first['topic_count'] == 189 and first['multi_article_topic_count'] == 3
     assert first['duplicate_candidates_grouped'] == 11
@@ -87,7 +90,7 @@ def test_200_global_grouping_and_unique_representatives():
     artifact = json.dumps(first)
     for forbidden in ('fake-secret', 'private profile', 'rss_excerpt', 'reasoning_text', 'original_feedback'):
         assert forbidden not in artifact
-    assert (first['prompt_tokens'],first['completion_tokens'],first['total_tokens']) == (200,200,400)
+    assert (first['prompt_tokens'],first['completion_tokens'],first['total_tokens']) == (300,300,600)
 
 
 @pytest.mark.parametrize('bad', [

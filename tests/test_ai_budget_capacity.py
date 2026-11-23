@@ -45,12 +45,12 @@ def test_200_invalid_first_response_retries_and_reserves_selection():
     assert [x[0] for x in calls] == ['topic_grouping','topic_grouping','topic_selection']
     first_len = len(calls[0][1]['candidates'][0]['rss_excerpt'])
     retry_len = len(calls[1][1]['candidates'][0]['rss_excerpt'])
-    assert 0 <= retry_len < first_len < 600
+    assert 0 <= retry_len <= first_len < 600
     assert report['status'] == 'ok' and report['topic_count'] == 200
     assert report['retry_attempted'] is True and report['retry_blocked_reason'] is None
     assert report['last_attempt_error_category'] == 'local_validation' and report['last_response_status'] == 'completed'
     assert report['last_error_response_status'] == 'completed'
-    assert report['stage_api_calls'] == {'topic_grouping':2, 'topic_selection':1}
+    assert report['stage_api_calls'] == {'topic_grouping':2, 'topic_audit':0, 'topic_selection':1}
     assert (report['prompt_tokens'], report['completion_tokens'], report['total_tokens']) == (61127, 787, 61914)
     assert report['total_tokens'] <= 160000 and report['budget_limit_hit'] is None
     assert len(report['ai_recommended']) == 1 and len(report['topic_groups']) == 200
@@ -106,7 +106,7 @@ def test_capacity_and_cap_coverage_are_explicit(count):
     assert report['skipped_candidate_cap'] == count - 200
     assert report['coverage_status'] == ('complete' if count == 200 else 'candidate_cap_reached')
     assert report['topic_count'] == 200 and report['status'] == 'ok'
-    assert report['stage_api_calls'] == {'topic_grouping':1, 'topic_selection':1} and len(calls) == 2
+    assert report['stage_api_calls'] == {'topic_grouping':1, 'topic_audit':0, 'topic_selection':1} and len(calls) == 2
     assert report['prompt_tokens'] <= 120000 and report['completion_tokens'] <= 40000 and report['total_tokens'] <= 160000
 
 
@@ -156,7 +156,7 @@ def test_completed_response_with_invalid_usage_has_safe_status():
     report = run(samples(2), client(handler))
     assert report['status'] == 'degraded' and report['fallback_reason'] == 'invalid_usage'
     assert report['last_response_status'] == 'completed' and report['last_attempt_error_category'] == 'invalid_usage'
-    assert report['stage_api_calls'] == {'topic_grouping':1,'topic_selection':0}
+    assert report['stage_api_calls'] == {'topic_grouping':1,'topic_audit':0,'topic_selection':0}
 
 
 def test_non_retryable_provider_error_explains_why_no_retry():

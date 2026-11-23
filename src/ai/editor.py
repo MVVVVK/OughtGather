@@ -7,7 +7,7 @@ from datetime import datetime, timezone
 from .client import DeepSeekClient, ProviderError
 from .identifiers import shorten
 from .memory.storage import load_profile
-from .schemas import validate_groups, validate_selection
+from .schemas import validate_groups, validate_audit, validate_selection
 
 
 def setting(name, default, ceiling):
@@ -206,13 +206,14 @@ def run(candidates, client=None):
               'estimated_cost': None, 'pricing_version': os.getenv('AI_PRICING_VERSION', 'unconfigured'),
               'memory_revision': None, 'memory_status': 'not_loaded', 'fallback_reason': None,
               'topic_count': 0, 'multi_article_topic_count': 0, 'topic_grouping_status': 'not_started',
-              'topic_selection_status': 'not_started', 'selected_topic_count': 0, 'selected_article_count': 0,
+              'topic_audit_status': 'not_started', 'audited_group_count': 0, 'split_group_count': 0,
+              'topic_count_after_audit': 0, 'topic_selection_status': 'not_started', 'selected_topic_count': 0, 'selected_article_count': 0,
               'max_articles_per_topic': 0, 'duplicate_candidates_grouped': 0, 'ai_recommended': [],
               'topic_groups': [], 'traditional_selected': [], 'agreement': [], 'ai_only': [], 'traditional_only': [],
               'failed_stage': None, 'last_attempt_error_category': None, 'last_response_status': 'not_received',
               'last_error_response_status': None,
               'retry_attempted': False, 'retry_blocked_reason': None, 'budget_limit_hit': None,
-              'stage_api_calls': {'topic_grouping': 0, 'topic_selection': 0}}
+              'stage_api_calls': {'topic_grouping': 0, 'topic_audit': 0, 'topic_selection': 0}}
     if mode != 'shadow':
         return report
     key = os.getenv('DEEPSEEK_API_KEY', '')
@@ -228,7 +229,7 @@ def run(candidates, client=None):
     report['traditional_selected'] = [c['candidate_id'] for c in candidates if c.get('traditional_selected')]
     candidates = candidates[:cap]
     if not candidates:
-        report.update(topic_grouping_status='not_needed', topic_selection_status='not_needed', duration=round(time.monotonic()-started, 3))
+        report.update(topic_grouping_status='not_needed', topic_audit_status='not_needed', topic_selection_status='not_needed', duration=round(time.monotonic()-started, 3))
         return report
     budget = Budget(report, started)
     stage = 'topic_grouping'
@@ -246,10 +247,38 @@ def run(candidates, client=None):
         minimum_selection = [{'group_id': f'g{i:03d}', 'candidates': [{**row, 'rss_excerpt': ''}]}
                              for i, row in enumerate(short_candidates, 1)]
         selection_minimum = budget.estimate(client.selection_payload(minimum_selection, provider_safe(profile), 800))
+        # Before grouping, conservatively estimate a global audit with pairs of
+        # candidates. Excerpts are expendable; candidate IDs are never dropped.
+        forecast = [{'group_id': f'a{i//2+1:03d}', 'candidates': [
+            {**row, 'rss_excerpt': ''} for row in short_candidates[i:i+2]]}
+                    for i in range(0, len(short_candidates)-1, 2)]
+        forecast_output = max(256, len(short_candidates) * 20) if forecast else 0
+        audit_minimum = budget.estimate(client.audit_payload(forecast, forecast_output)) if forecast else 0
         groups = budget.request(client, group_build, group_output, lambda data: validate_groups(data, short_to_real),
-                                'topic_grouping', future=(selection_minimum, 800))
+                                'topic_grouping', future=(selection_minimum + audit_minimum, 800 + forecast_output))
         report['topic_grouping_status'] = 'ok'
         report['topic_count'] = len(groups)
+        stage = 'topic_audit'
+        multi_groups = [group for group in groups if len(group['members']) > 1]
+        report['audited_group_count'] = len(multi_groups)
+        if multi_groups:
+            audit_groups = {f'a{i:03d}': group for i, group in enumerate(multi_groups, 1)}
+            audit_output = max(256, sum(len(g['members']) for g in multi_groups) * 20)
+            def audit_input(limit):
+                return [{'group_id': group_id,
+                         'candidates': [{**by_short[real_to_short[c]],
+                                         'rss_excerpt': (by_short[real_to_short[c]].get('rss_excerpt') or '')[:limit]}
+                                        for c in group['members']]}
+                        for group_id, group in audit_groups.items()]
+            audit_build = lambda n: client.audit_payload(audit_input(n), audit_output)
+            groups, split_count = budget.request(
+                client, audit_build, audit_output,
+                lambda data: validate_audit(data, audit_groups, short_to_real, groups),
+                'topic_audit', future=(selection_minimum, 800))
+            report.update(topic_audit_status='ok', split_group_count=split_count)
+        else:
+            report['topic_audit_status'] = 'not_needed'
+        report['topic_count_after_audit'] = len(groups)
         report['multi_article_topic_count'] = sum(len(g['members']) > 1 for g in groups)
         report['duplicate_candidates_grouped'] = sum(len(g['members']) - 1 for g in groups)
         group_short_to_real = {f'g{i:03d}': group['group_id'] for i, group in enumerate(groups, 1)}

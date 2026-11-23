@@ -69,6 +69,9 @@ def test_predefined_groups_exercise_contract_not_model_semantics(monkeypatch):
             assert payload['instructions'] == GROUP_SYSTEM
             assert [row['title'] for row in data['candidates']] == [title for title, _ in STORIES]
             result = {'groups': [{'members': ['c011', 'c012']}, {'members': ['c013', 'c014']}]}
+        elif name == 'topic_audit':
+            assert len(data['groups']) == 2
+            result = {'splits': []}
         else:
             assert payload['instructions'] == SELECT_SYSTEM
             assert len(data['groups']) == 12
@@ -81,7 +84,7 @@ def test_predefined_groups_exercise_contract_not_model_semantics(monkeypatch):
             'usage': {'input_tokens': 100, 'output_tokens': 50, 'total_tokens': 150}})
 
     report = run(candidates, DeepSeekClient('fake', transport=httpx.MockTransport(handler)))
-    assert responses == ['topic_grouping', 'topic_selection']
+    assert responses == ['topic_grouping', 'topic_audit', 'topic_selection']
     assert report['status'] == 'ok' and report['topic_count'] == 12
     assert report['multi_article_topic_count'] == 2 and report['selected_article_count'] == 12
     groups_by_id = {m['candidate_id']: group for group in report['topic_groups'] for m in group['members']}
