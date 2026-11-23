@@ -416,6 +416,10 @@ def main(argv=None):
     log_banner("Ought Gather - 自动化信息聚合工具")
 
     try:
+        # Ensure a recoverable encrypted backup can be made before fetching.
+        if not args.test_mode and not args.fresh_start and os.getenv("WEBDAV_ENABLED", "false").lower() == "true":
+            from src.delivery.service import backup_key
+            backup_key()
         # 1. 加载配置与初始化去重追踪器
         log_stage(1, 5, "加载配置与初始化去重追踪器")
         config = load_config(args.config)
@@ -486,36 +490,42 @@ def main(argv=None):
             mark_epub_articles(processed_results, tracker)
             tracker.save()
             write_quality_reports(processed_results)
+            edition = None
+            backup_failed = False
+            if not args.test_mode and os.getenv("WEBDAV_ENABLED", "false").lower() == "true":
+                from src.delivery.service import make_backup, backup_key, write_status
+                try:
+                    edition = make_backup(epub_path, backup_key())
+                except Exception:
+                    backup_failed = True
+                    logger.error("Encrypted delivery backup could not be created")
+                    write_status({'webdav': 'failed', 'error': 'backup_unavailable', 'email': 'not_sent'})
+                    error_log.append("Encrypted delivery backup could not be created")
 
-            # 5. 发送邮件与 WebDAV 上传
+            # 5. WebDAV is primary; email is a legacy delivery or failure fallback.
             log_stage(5, 5, "推送分发与保存记录")
-            logger.info("正在发送 EPUB 至 Kindle 邮箱...")
-            try:
-                if args.test_mode:
-                    logger.info("Test mode: email delivery disabled")
-                else:
+            if args.test_mode:
+                logger.info("Test mode: all delivery disabled")
+            elif backup_failed:
+                logger.error("WebDAV delivery skipped because no recovery backup is available")
+            elif edition:
+                from src.delivery.service import deliver, write_status, BACKUP_PATH
+                try:
+                    delivery = deliver(epub_path, edition, sender_factory=SMTPSender, cleanup_backup=BACKUP_PATH)
+                    if delivery['webdav'] != 'success':
+                        error_log.append("WebDAV delivery failed: " + str(delivery.get('error')))
+                except Exception:
+                    logger.error("WebDAV delivery failed (configuration or unexpected error)")
+                    write_status({'webdav': 'failed', 'error': 'configuration_or_unexpected', 'email': 'not_sent'})
+                    error_log.append("WebDAV delivery failed")
+            else:
+                try:
                     sender = SMTPSender()
-                subject = config.title.get_plain_text()
-                if not args.test_mode and not sender.send_epub(epub_path, subject):
-                    logger.error("发送邮件失败: SMTP sender returned False")
-                    error_log.append("Email sending failed: sender returned False")
-            except Exception as e:
-                logger.exception(f"发送邮件失败: {e}")
-                error_log.append(f"Email sending failed: {str(e)}")
-
-            logger.info("正在上传 EPUB 至 WebDAV...")
-            try:
-                from src.uploader.webdav_uploader import WebDavUploader
-                uploader = WebDavUploader() if not args.test_mode else None
-                uploaded = uploader.upload_epub(epub_path) if uploader else False
-                if uploaded:
-                    logger.info("EPUB 成功上传至 WebDAV")
-                elif getattr(getattr(uploader, "config", None), "enabled", False):
-                    logger.error("WebDAV 上传失败: uploader returned False")
-                    error_log.append("WebDAV upload failed: uploader returned False")
-            except Exception as e:
-                logger.exception(f"WebDAV 上传失败: {e}")
-                error_log.append(f"WebDAV upload failed: {str(e)}")
+                    if not sender.send_epub(epub_path, config.title.get_plain_text()):
+                        error_log.append("Email sending failed")
+                except Exception as e:
+                    logger.error("Email sending failed: %s", type(e).__name__)
+                    error_log.append("Email sending failed")
 
         # 始终保存去重数据库（确保 limit 截断标记以及新增抓取的记录得到持久化）
         logger.info("保存去重数据库...")

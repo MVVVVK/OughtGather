@@ -49,7 +49,7 @@ Ought Gather 是一个 Python 自动化信息聚合工具。它从 RSS、网页�
 
 ## GitHub Actions 部署（推荐）
 
-工作流文件是 [.github/workflows/daily-gather.yml](.github/workflows/daily-gather.yml)，每天定时运行一次，也可以手动触发。工作流会安装依赖、准备 `config.json`、执行 `python src/main.py`、提交去重记录，并把生成的 EPUB 作为 artifact 保留 7 天。
+工作流文件是 [.github/workflows/daily-gather.yml](.github/workflows/daily-gather.yml)，每天定时运行一次，也可以手动触发。工作流会安装依赖、准备 `config.json`、执行 `python src/main.py` 并保存去重记录。明文 EPUB artifact 默认关闭，仅在手动运行时显式启用后保留 7 天。
 
 ### 部署步骤
 
@@ -71,7 +71,7 @@ Actions -> Daily Gather -> Run workflow
 
 成功运行后：
 
-- `output/` 中生成 EPUB，并作为 artifact 上传（保留 7 天）
+- `output/` 中生成 EPUB；手动运行显式开启 `upload_plaintext_epub` 时才上传明文 artifact（保留 7 天）
 - EPUB 通过邮件发送到 `KINDLE_EMAIL`
 - `data/fetched_urls.txt` 在actions缓存，用于下次去重
 
@@ -83,13 +83,13 @@ Actions -> Daily Gather -> Run workflow
 
 ### 修改运行时间
 
-通过 Cloudflare Workers 定时触发 GitHub Actions，触发时间比 GitHub 自带的 `schedule` 更精准（误差通常在 1 分钟以内）。`schedule` 保留为保底备用，且会在外部触发后 12 小时内自动跳过，避免重复执行。
+Daily Gather 的 GitHub Actions 定时为北京时间 06:30。建议只启用一个每日定时触发器：GitHub Actions 或 Cloudflare Worker 二选一；两者均启用可能产生两次运行。已有 Worker 的定时更改需要重新部署。WebDAV 投递与安全补传见 [WebDAV 说明](docs/WEBDAV_DELIVERY.md)。
 
 ### 修改时区
 
 修改工作流文件 [.github/workflows/daily-gather.yml](.github/workflows/daily-gather.yml)中 `TZ: Asia/Shanghai` 字段。影响epub中显示的文章时间。
 
-#### 配置外部触发器（推荐）
+#### 配置外部触发器（可选，与 Actions 定时二选一）
 
 **第一步：修改运行时间代码**
 
@@ -97,7 +97,7 @@ Actions -> Daily Gather -> Run workflow
 
 ```toml
 [triggers]
-crons = ["30 23 * * *"]  # UTC 23:30，即北京时间早上 7:30
+crons = ["30 22 * * *"]  # UTC 22:30，即北京时间次日 06:30
 ```
 
 **第二步：在 Cloudflare 仪表板关联仓库**
@@ -128,7 +128,7 @@ crons = ["30 23 * * *"]  # UTC 23:30，即北京时间早上 7:30
 ```yaml
 on:
   schedule:
-    - cron: '0 0 * * *'   # UTC 00:00，北京时间约 08:00
+    - cron: '30 22 * * *'   # UTC 22:30，北京时间次日 06:30
   workflow_dispatch:
 ```
 

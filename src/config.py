@@ -259,7 +259,8 @@ def get_smtp_config() -> Dict[str, str]:
         "port": int(get_secret("SMTP_PORT")),
         "username": get_secret("SMTP_USERNAME"),
         "password": get_secret("SMTP_PASSWORD"),
-        "kindle_email": get_secret("KINDLE_EMAIL")
+        "kindle_email": get_secret("EMAIL_RECIPIENT", required=False) or get_secret("KINDLE_EMAIL"),
+        "recipient": get_secret("EMAIL_RECIPIENT", required=False) or get_secret("KINDLE_EMAIL", required=False)
     }
 
 

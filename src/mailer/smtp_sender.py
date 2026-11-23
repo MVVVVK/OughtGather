@@ -47,7 +47,7 @@ class SMTPSender:
             # 创建邮件
             msg = MIMEMultipart()
             msg['From'] = self.config['username']
-            msg['To'] = self.config['kindle_email']
+            msg['To'] = self.config.get('recipient') or self.config['kindle_email']
             msg['Subject'] = subject
 
             # 添加邮件正文
@@ -55,7 +55,7 @@ class SMTPSender:
                 "你好，\n\n"
                 "这是一份为您自动整理的每日新闻汇编 EPUB 电子书，"
                 "涵盖了今日的重要资讯和精选内容。\n\n"
-                "您可以将此文件同步至 Kindle 设备，随时随地离线阅读。\n"
+                "您可以将此文件传送至阅读设备，随时离线阅读。\n"
                 "希望这份汇编能为您的阅读时光增添一份便利与乐趣。\n\n"
                 "本项目开源在 GitHub：https://github.com/liusonwood/oughtgather\n"
                 "欢迎 Star、Issue 或贡献代码！\n\n"
@@ -69,11 +69,25 @@ class SMTPSender:
             # 发送邮件
             self._send_mail(msg)
 
-            self.logger.info(f"EPUB sent successfully to {self.config['kindle_email']}")
+            self.logger.info("EPUB sent successfully")
             return True
 
         except Exception as e:
-            self.logger.error(f"Failed to send EPUB: {e}")
+            self.logger.error("Failed to send EPUB (%s)", type(e).__name__)
+            return False
+
+    def send_notification(self, subject: str, body: str) -> bool:
+        """Send a delivery failure notice without an attachment."""
+        try:
+            msg = MIMEMultipart()
+            msg['From'] = self.config['username']
+            msg['To'] = self.config.get('recipient') or self.config['kindle_email']
+            msg['Subject'] = subject
+            msg.attach(MIMEText(body, 'plain', 'utf-8'))
+            self._send_mail(msg)
+            return True
+        except Exception:
+            self.logger.error("Failed to send delivery notification")
             return False
 
     def _attach_file(self, msg: MIMEMultipart, file_path: str):

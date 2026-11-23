@@ -1,46 +1,224 @@
-"""
-WebDAV 上传器模块
-"""
+"""Transactional WebDAV delivery of dated EPUBs."""
+import hashlib
 import os
+import re
+import time
+import uuid
+from datetime import datetime, timedelta
+from urllib.parse import quote, unquote, urlsplit
+from xml.etree import ElementTree
+
 import httpx
 from src.config import get_webdav_config
+from src.utils.helpers import get_now
 from src.utils.logger import get_logger
 
+ARCHIVE_RE = re.compile(r'^\d{4}-\d{2}-\d{2}T\d{6}-[0-9a-f]{64}\.epub$')
+
+
+class DeliveryError(Exception):
+    def __init__(self, category, message):
+        self.category = category
+        super().__init__(message)
+
+
 class WebDavUploader:
-    """WebDAV 上传器"""
-    def __init__(self):
+    def __init__(self, client=None):
         self.logger = get_logger()
         self.config = get_webdav_config()
+        self._client = client
+        self.last_error = None
+        self.last_result = {}
 
-    def upload_epub(self, epub_path: str) -> bool:
-        """上传 EPUB 文件"""
-        if not self.config or not self.config.enabled:
-            self.logger.info("WebDAV is not enabled, skip pushing.")
-            return False
+    def _request(self, method, url, *, allowed=(200, 201, 204), **kwargs):
+        for attempt in range(3):
+            try:
+                response = self._client.request(method, url, **kwargs)
+                code = response.status_code
+                if code in allowed:
+                    return response
+                if code in (405, 501):
+                    raise DeliveryError('unsupported', f'{method} is unsupported (HTTP {code})')
+                if code in (401, 403):
+                    raise DeliveryError('authentication', f'WebDAV HTTP {code}')
+                if code in (429, 500, 502, 503, 504):
+                    if attempt < 2:
+                        time.sleep(0.2 * 2 ** attempt)
+                        continue
+                    raise DeliveryError('network', f'WebDAV HTTP {code}')
+                if code == 507:
+                    raise DeliveryError('quota', 'WebDAV storage quota exceeded')
+                if 300 <= code < 400:
+                    raise DeliveryError('redirect', 'WebDAV redirect refused')
+                raise DeliveryError('remote', f'WebDAV HTTP {code}')
+            except httpx.TransportError as exc:
+                if attempt == 2:
+                    raise DeliveryError('network', 'WebDAV connection failed') from exc
+                time.sleep(0.2 * 2 ** attempt)
+        raise DeliveryError('network', 'WebDAV retry limit exceeded')
 
-        if not os.path.exists(epub_path):
-            self.logger.error(f"EPUB file not found: {epub_path}")
-            return False
+    def _setup(self):
+        parsed = urlsplit(self.config.url or '')
+        if parsed.scheme not in ('https', 'http') or not parsed.hostname or parsed.username or parsed.password or parsed.query or parsed.fragment:
+            raise DeliveryError('configuration', 'Invalid WebDAV base URL')
+        parts = (self.config.remote_path or '/').strip('/').split('/')
+        if any(p in ('.', '..') or '\\' in p for p in parts):
+            raise DeliveryError('configuration', 'Invalid WebDAV remote directory')
+        self.base = self.config.url.rstrip('/')
+        for part in filter(None, parts):
+            self.base += '/' + quote(part, safe='')
+            self._ensure_collection(self.base)
+        self.archive = self.base + '/archive'
+        self._ensure_collection(self.archive)
 
-        filename = os.path.basename(epub_path)
-        # 简单拼接路径
-        base_url = self.config.url.rstrip('/')
-        remote_path = self.config.remote_path.lstrip('/')
-        remote_url = f"{base_url}/{remote_path}/{filename}"
-        
-        try:
-            self.logger.info(f"Uploading EPUB to {remote_url}...")
-            with open(epub_path, 'rb') as f:
-                # WebDAV PUT upload
-                response = httpx.put(
-                    remote_url,
-                    content=f,
-                    auth=(self.config.username, self.config.password),
-                    timeout=30.0
+    def _ensure_collection(self, url):
+        response = self._request('MKCOL', url, allowed=(201, 405))
+        if response.status_code == 405:
+            # 405 can mean an existing directory or an unsupported MKCOL.
+            # A successful Depth: 0 listing confirms an accessible collection.
+            try:
+                listing = self._request('PROPFIND', url + '/', headers={'Depth': '0'}, allowed=(207,))
+            except DeliveryError as exc:
+                if exc.category == 'remote' and '404' in str(exc):
+                    raise DeliveryError('unsupported', 'MKCOL unavailable or collection is absent') from exc
+                raise
+            try:
+                root = ElementTree.fromstring(listing.content)
+                expected = unquote(urlsplit(url).path).rstrip('/')
+                exists = any(
+                    unquote(urlsplit(item.findtext('{DAV:}href', '')).path).rstrip('/') == expected
+                    and any(re.search(r'\s2\d\d(?:\s|$)', status.text or '')
+                            for status in item.findall('.//{DAV:}status'))
+                    for item in root.findall('{DAV:}response')
                 )
-            response.raise_for_status()
-            self.logger.info("EPUB uploaded successfully to WebDAV")
-            return True
-        except Exception as e:
-            self.logger.error(f"Failed to upload EPUB to WebDAV: {e}")
+            except ElementTree.ParseError as exc:
+                raise DeliveryError('remote', 'Invalid PROPFIND collection response') from exc
+            if not exists:
+                raise DeliveryError('unsupported', 'MKCOL unavailable or collection is absent')
+
+    def _read(self, url):
+        response = self._request('GET', url, allowed=(200, 404))
+        return None if response.status_code == 404 else response.content
+
+    def _write_verified(self, target, content, overwrite):
+        # Upload and verify a same-directory temporary file before the atomic MOVE.
+        temp = target.rsplit('/', 1)[0] + '/.oughtgather-' + uuid.uuid4().hex + '.tmp'
+        try:
+            self._request('PUT', temp, content=content)
+            if self._read(temp) != content:
+                raise DeliveryError('verification', 'WebDAV staging verification failed')
+            self._request('MOVE', temp, headers={'Destination': target, 'Overwrite': 'T' if overwrite else 'F'})
+        finally:
+            try:
+                self._request('DELETE', temp, allowed=(200, 204, 404))
+            except DeliveryError as exc:
+                self._cleanup_warning = str(exc)
+        if self._read(target) != content:
+            raise DeliveryError('verification', 'WebDAV destination verification failed')
+
+    def _list_archives(self):
+        response = self._request('PROPFIND', self.archive + '/', headers={'Depth': '1'}, allowed=(207,))
+        try:
+            root = ElementTree.fromstring(response.content)
+            names = set()
+            for href in root.findall('.//{DAV:}href'):
+                path = urlsplit(href.text or '').path
+                name = unquote(path.rstrip('/').split('/')[-1])
+                if ARCHIVE_RE.fullmatch(name):
+                    names.add(name)
+            return names
+        except ElementTree.ParseError as exc:
+            raise DeliveryError('remote', 'Invalid WebDAV directory listing') from exc
+
+    def upload_epub(self, epub_path: str, edition: str = None) -> bool:
+        self.last_error, self.last_result = None, {}
+        self._cleanup_warning = None
+        if not self.config or not self.config.enabled:
+            self.last_error = 'disabled'
+            self.logger.info('WebDAV is not enabled, skip pushing.')
             return False
+        try:
+            with open(epub_path, 'rb') as stream:
+                content = stream.read()
+            digest = hashlib.sha256(content).hexdigest()
+            edition = edition or get_now().strftime('%Y-%m-%dT%H%M%S') + '-' + digest + '.epub'
+            if not ARCHIVE_RE.fullmatch(edition) or not edition.endswith(digest + '.epub'):
+                raise DeliveryError('configuration', 'Invalid edition identifier')
+            retention = int(os.getenv('WEBDAV_RETENTION_DAYS') or '30')
+            if not 1 <= retention <= 3650:
+                raise DeliveryError('configuration', 'Invalid retention days')
+            datetime.strptime(edition[:17], '%Y-%m-%dT%H%M%S')
+            if self._client is None:
+                self._client = httpx.Client(auth=(self.config.username, self.config.password), timeout=30.0, follow_redirects=False)
+                owned = True
+            else:
+                owned = False
+            try:
+                self._setup()
+                target = self.archive + '/' + quote(edition, safe='')
+                existing = self._read(target)
+                if existing is None:
+                    self._write_verified(target, content, overwrite=False)
+                elif existing != content:
+                    # The name contains the full digest, so a mismatch is a corrupt
+                    # copy of this edition. Repair it via the same verified staging path.
+                    self._write_verified(target, content, overwrite=True)
+                names = self._list_archives()
+                # Use the newest verified archive, even when retrying an older edition.
+                newest = max(names | {edition})
+                newest_content = content if newest == edition else self._read(self.archive + '/' + quote(newest, safe=''))
+                if newest_content is None or hashlib.sha256(newest_content).hexdigest() != newest[-69:-5]:
+                    raise DeliveryError('verification', 'Newest archive verification failed')
+                latest = self.base + '/latest.epub'
+                previous = self._read(latest)
+                update_latest = previous != newest_content
+                if update_latest:
+                    if previous is not None:
+                        previous_path = self.base + '/latest.previous.epub'
+                        if self._read(previous_path) != previous:
+                            self._write_verified(previous_path, previous, overwrite=True)
+                    try:
+                        self._write_verified(latest, newest_content, overwrite=True)
+                    except DeliveryError:
+                        # A timeout or failed verification may follow a committed MOVE.
+                        # Try to restore the old latest; the verified previous copy
+                        # remains available even if the server is unreachable.
+                        if previous is not None:
+                            try:
+                                if self._read(latest) != previous:
+                                    self._write_verified(latest, previous, overwrite=True)
+                            except DeliveryError:
+                                pass
+                        raise
+                cutoff = get_now().date() - timedelta(days=retention - 1)
+                cleanup_error = None
+                for name in names:
+                    try:
+                        date = datetime.strptime(name[:10], '%Y-%m-%d').date()
+                        if date < cutoff and name != edition:
+                            self._request('DELETE', self.archive + '/' + quote(name, safe=''), allowed=(200, 204, 404))
+                    except ValueError:
+                        continue
+                    except DeliveryError as exc:
+                        cleanup_error = exc.category
+                        self._cleanup_warning = str(exc)
+                        break
+                self.last_result = {'archive': edition, 'sha256': digest, 'latest_updated': update_latest, 'latest_edition': newest, 'cleanup_error': cleanup_error, 'cleanup_warning': self._cleanup_warning}
+                return True
+            finally:
+                if owned:
+                    self._client.close()
+                    self._client = None
+        except FileNotFoundError:
+            self.last_error = 'missing_file'
+        except OSError:
+            self.last_error = 'local_io'
+        except (ValueError, TypeError):
+            self.last_error = 'configuration'
+        except DeliveryError as exc:
+            self.last_error = exc.category
+            self.last_result = {'error_detail': str(exc)}
+        except httpx.HTTPError:
+            self.last_error = 'network'
+        self.logger.error('WebDAV delivery failed (%s)', self.last_error)
+        return False
