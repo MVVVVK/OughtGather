@@ -1,8 +1,8 @@
-# Playwright 网页挑战回退说明
+# Playwright 网页渲染回退说明
 
 ## 目的
 
-Ought Gather 默认先使用 `httpx` 请求网页。网页请求最终返回非 `200` 时，网页类抓取器会自动切换到 Playwright Headless Chromium，执行页面 JavaScript，并将渲染后的 HTML 交给现有正文提取流程。
+Ought Gather 默认先使用 `httpx` 请求网页。网页请求返回适合重试的非 `200` 响应时，网页类抓取器可使用 Playwright Headless Chromium 渲染页面，并将渲染后的 HTML 交给正文提取与质量检查。访问限制和挑战响应不会触发浏览器重试。
 
 实现入口：`src/fetchers/base.py` 的 `BaseFetcher._make_request()` 和 `_make_browser_request()`。
 
@@ -20,15 +20,14 @@ Ought Gather 默认先使用 `httpx` 请求网页。网页请求最终返回非 
 - mail、weather、trending、Twitter、Raindrop 等 API 请求；
 - 未在调用 `_make_request()` 时传入 `allow_browser_fallback=True` 的请求。
 
-## 状态码和挑战等待
+## 状态码和质量检查
 
-- 普通页面返回 `200`：直接使用 HTTP 响应。
-- 页面返回 `202`：视为可能存在 AWS WAF JavaScript challenge，启动浏览器并等待后续文档响应。
-- 浏览器最终返回 `200` 或其他非 `202` 的 `2xx`：回退成功，使用渲染后的 DOM。
-- 浏览器初始返回 `403`、`404`、`500` 等终态错误：立即失败，不等待完整超时。
-- `202` 在超时内没有变成有效 `2xx`：回退失败，保留原始 HTTP 错误并由上层处理。
+- 普通页面返回 `200`：直接提取正文并检查质量；即使正文无效也不触发浏览器重试。
+- `202`、`401`、`403`、`407`、`429`、`451`，或响应中含验证码、访问拒绝、JavaScript 挑战或付费墙提示：不使用浏览器重试。
+- 其他非 `200` 响应（例如服务暂时不可用）可以尝试浏览器；浏览器返回 `202` 或非 `2xx` 时立即失败，不等待挑战完成。
+- 普通 HTTP 和浏览器响应均经正文提取和质量检查；浏览器启动失败或正文无效时，RSS 依次回退到 RSS 全文、摘要和元信息。
 
-Playwright 默认启用 JavaScript，不需要额外设置 `java_script_enabled`。如果结果仍是“JavaScript is disabled”挑战页，通常表示挑战没有完成、站点识别出 Headless 浏览器，或最终页面仍未完成跳转。
+这不会解决付费墙、验证码或访问限制；部分真实网站也可能以其他状态码或文案表示限制，无法穷尽识别。
 
 ## 浏览器生命周期
 
@@ -39,15 +38,7 @@ Playwright 默认启用 JavaScript，不需要额外设置 `java_script_enabled`
 
 ## 日志
 
-成功触发回退时，日志中会出现类似内容：
-
-```text
-[Playwright] Triggering browser fallback ... after HTTP 202
-[Playwright] Launching headless Chromium
-[Playwright] ... initial document status: 202
-[Playwright] Waiting for JavaScript challenge: ...
-[Playwright] Browser fallback succeeded ... with final HTTP 200
-```
+成功触发回退时，日志会包含 `Triggering browser fallback` 及原始 HTTP 状态；成功渲染后仍需通过正文质量检查。
 
 如果出现 `Playwright fallback failed`，请同时查看原始 HTTP 状态、浏览器最终状态和启动错误。
 
@@ -83,7 +74,7 @@ playwright install --with-deps chromium
 python3.11 -m pytest tests/
 ```
 
-如果只测试普通抓取逻辑而本机没有 Chromium，非挑战页面仍可运行；真正触发浏览器回退时会记录明确的 Playwright 安装错误。
+如果只测试普通抓取逻辑而本机没有 Chromium，普通 HTTP 页面仍可运行；真正触发浏览器回退时会记录明确的 Playwright 安装错误。
 
 ## RSS 全文降级
 

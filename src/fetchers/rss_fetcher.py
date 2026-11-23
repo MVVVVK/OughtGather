@@ -220,8 +220,11 @@ class RSSFetcher(BaseFetcher):
         status = ""
         method = ""
         if metadata.get("full_text", "N") == "Y":
+            self._last_full_text_quality_reason = None
             extracted, raw_html = self._fetch_full_text(link)
             ok, reason, _ = inspect(extracted, full=True)
+            if not ok and reason == "empty_content" and self._last_full_text_quality_reason:
+                reason = self._last_full_text_quality_reason
             if not ok and reason == "empty_content" and raw_html:
                 _, raw_reason, _ = inspect(raw_html)
                 if raw_reason not in ("", "empty_content"):

@@ -252,9 +252,9 @@ class TestBaseFetcherMakeRequest:
     def test_non_200_page_uses_browser_fallback(self, mock_safe_request):
         fetcher = self._make_fetcher()
         mock_response = MagicMock()
-        mock_response.status_code = 202
+        mock_response.status_code = 503
         mock_response.request = MagicMock()
-        mock_response.content = b"challenge"
+        mock_response.content = b"unavailable"
         mock_client = MagicMock()
         mock_client.is_closed = False
         mock_client.request.return_value = mock_response
@@ -294,7 +294,7 @@ class TestBaseFetcherMakeRequest:
     def test_browser_failure_preserves_original_non_200_error(self, mock_safe_request):
         fetcher = self._make_fetcher()
         mock_response = MagicMock()
-        mock_response.status_code = 202
+        mock_response.status_code = 503
         mock_response.request = MagicMock()
         mock_client = MagicMock()
         mock_client.is_closed = False
@@ -305,9 +305,9 @@ class TestBaseFetcherMakeRequest:
         with patch.object(
             fetcher,
             "_make_browser_request",
-            side_effect=RuntimeError("challenge timeout"),
+            side_effect=RuntimeError("browser unavailable"),
         ):
-            with pytest.raises(Exception, match="Unexpected HTTP status 202"):
+            with pytest.raises(Exception, match="Unexpected HTTP status 503"):
                 fetcher._make_request(
                     "https://example.com",
                     allow_browser_fallback=True,

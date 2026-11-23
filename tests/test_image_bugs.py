@@ -259,7 +259,7 @@ class TestImageBugs:
         """
 
         # Mock trafilatura to return <graphic> instead of <img>
-        trafilatura_content = "<html><body><h1>Article Title</h1><graphic src=\"https://cdn.example.com/photo.webp\"></graphic><p>Article content here.</p></body></html>"
+        trafilatura_content = "<html><body><h1>Article Title</h1><graphic src=\"https://cdn.example.com/photo.webp\"></graphic><p>" + "Article content here. " * 20 + "</p></body></html>"
 
         with patch.object(fetcher, "_make_request") as mock_req:
             mock_req.return_value.text = raw_html

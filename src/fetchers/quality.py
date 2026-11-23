@@ -31,3 +31,13 @@ def inspect(content, *, full=False):
                 (len(substantive) >= 1 and len(text) >= 350)):
             return False, 'insufficient_article_text', len(text)
     return True, '', len(text)
+
+
+def browser_retry_allowed(status, html):
+    """Render transient errors, never retry an access restriction or challenge."""
+    if status == 200 or status in (202, 401, 403, 407, 429, 451):
+        return False
+    _, reason, _ = inspect(html)
+    if reason in ("access_blocked", "javascript_disabled"):
+        return False
+    return not re.search(r"subscribe to (?:continue|read)|subscription required|paywall|abonnez-vous pour", html, re.I)
