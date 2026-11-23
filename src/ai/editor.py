@@ -136,9 +136,19 @@ def run(candidates, client=None):
                     report['status'] = 'budget_exhausted'
                 break
             except ProviderError as exc:
-                retryable = exc.category == 'timeout' or (exc.category == 'http' and exc.status in (429, 500, 502, 503, 504))
+                if exc.usage is not None:
+                    for key_name in ('prompt_tokens', 'completion_tokens', 'total_tokens'):
+                        report[key_name] += exc.usage[key_name]
+                    reserved_input += exc.usage['prompt_tokens'] - estimate
+                    reserved_output += exc.usage['completion_tokens'] - max_tokens
+                    if report['prompt_tokens'] > input_cap or report['completion_tokens'] > output_cap or report['total_tokens'] > total_cap:
+                        report['status'] = 'budget_exhausted'
+                        break
+                retryable = (exc.category in ('timeout', 'response_incomplete_max_tokens', 'missing_output_text', 'invalid_structured_output', 'invalid_response')
+                             or (exc.category == 'http' and exc.status in (429, 500, 502, 503, 504)))
                 if not retryable or attempt or time.monotonic() + exc.retry_after >= deadline:
-                    report.update(status='degraded', fallback_reason=exc.category, http_status=exc.status, failed_count=report['failed_count'] + len(batch)); break
+                    reason = 'invalid_model_output' if exc.category in ('missing_output_text', 'invalid_structured_output') else exc.category
+                    report.update(status='degraded', fallback_reason=reason, http_status=exc.status, failed_count=report['failed_count'] + len(batch)); break
                 if exc.retry_after:
                     time.sleep(exc.retry_after)
             except (ValueError, TypeError, KeyError):
@@ -197,8 +207,16 @@ def run(candidates, client=None):
             except CompositionBudgetExceeded:
                 report['composition_status'] = 'fallback_budget'
             except ProviderError as exc:
-                report['composition_status'] = ('fallback_timeout' if exc.category == 'timeout' else
-                                                'fallback_invalid_output' if exc.category in ('invalid_response', 'invalid_usage') else 'fallback_provider')
+                if exc.usage is not None:
+                    for name in ('prompt_tokens', 'completion_tokens', 'total_tokens'):
+                        report[name] += exc.usage[name]
+                    reserved_input += exc.usage['prompt_tokens'] - estimate
+                    reserved_output += exc.usage['completion_tokens'] - desired
+                if report['prompt_tokens'] > input_cap or report['completion_tokens'] > output_cap or report['total_tokens'] > total_cap:
+                    report['composition_status'] = 'fallback_budget'
+                else:
+                    report['composition_status'] = ('fallback_timeout' if exc.category == 'timeout' else
+                                                    'fallback_invalid_output' if exc.category in ('invalid_response', 'invalid_usage', 'missing_output_text', 'invalid_structured_output', 'response_incomplete_max_tokens', 'response_incomplete_content_filter', 'response_incomplete_other') else 'fallback_provider')
             except (ValueError, TypeError, KeyError, AttributeError):
                 report['composition_status'] = 'fallback_invalid_output'
             except Exception:

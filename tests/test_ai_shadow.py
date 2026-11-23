@@ -17,9 +17,14 @@ def item(i):
             'perspective_value': 70, 'confidence': 'medium', 'event_cluster': 'event', 'cluster_type': 'analysis', 'reason': 'context'}
 
 
+def response_text(content, prompt=100, completion=50):
+    return {'status': 'completed', 'output': [{'type': 'message', 'role': 'assistant',
+            'content': [{'type': 'output_text', 'text': content}]}],
+            'usage': {'input_tokens': prompt, 'output_tokens': completion, 'total_tokens': prompt + completion}}
+
+
 def response(items):
-    return {'choices': [{'message': {'content': json.dumps({'items': items})}}],
-            'usage': {'prompt_tokens': 100, 'completion_tokens': 50, 'total_tokens': 150}}
+    return response_text(json.dumps({'items': items}))
 
 
 @pytest.fixture(autouse=True)
@@ -33,12 +38,13 @@ def test_deepseek_protocol_and_report_privacy():
     calls = []
     def handler(request):
         calls.append(request)
-        assert str(request.url) == 'https://api.deepseek.com/chat/completions'
+        assert str(request.url) == 'https://api.deepseek.com/responses'
         body = json.loads(request.content)
-        assert body['thinking'] == {'type': 'disabled'}
-        assert body['response_format'] == {'type': 'json_object'}
-        assert 'tools' not in body
-        assert 'UNTRUSTED DATA' in body['messages'][0]['content']
+        assert body['reasoning'] == {'effort': 'none'}
+        assert body['text']['format']['type'] == 'json_schema'
+        assert body['text']['format']['name'] == 'article_analysis'
+        assert body['tools'] == [] and body['store'] is False and body['background'] is False
+        assert 'UNTRUSTED DATA' in body['instructions']
         return httpx.Response(200, json=response([item(1)]))
     result = run([candidate()], DeepSeekClient('PRIVATE-KEY-ABC', transport=httpx.MockTransport(handler)))
     assert result['status'] == 'ok' and result['agreement'] == ['1']
@@ -80,7 +86,7 @@ def test_invalid_json_is_retried_and_degraded(content):
     count = []
     def handler(request):
         count.append(1)
-        return httpx.Response(200, json={'choices': [{'message': {'content': content}}], 'usage': {'prompt_tokens': 10, 'completion_tokens': 2, 'total_tokens': 12}})
+        return httpx.Response(200, json=response_text(content, 10, 2))
     result = run([candidate()], DeepSeekClient('x', transport=httpx.MockTransport(handler)))
     assert result['status'] == 'degraded' and len(count) == 2
     assert result['total_tokens'] == 24
@@ -199,7 +205,7 @@ def test_candidate_cap_is_applied_before_provider(monkeypatch):
         return httpx.Response(200, json=response([item(1)]))
     result = run([candidate(1), candidate(2)], DeepSeekClient('x', transport=httpx.MockTransport(handler)))
     assert result['status'] == 'ok' and result['skipped_candidate_cap'] == 1
-    payload = json.loads(requests[0]['messages'][1]['content'])
+    payload = json.loads(requests[0]['input'])
     assert len(payload['candidates']) == 1
 
 
@@ -299,7 +305,7 @@ def test_cluster_ids_are_scoped_or_semantic_across_batches(monkeypatch):
     def analyze_with(signature):
         def handler(request):
             payload = json.loads(request.content)
-            sent = json.loads(payload['messages'][1]['content'])['candidates']
+            sent = json.loads(payload['input'])['candidates']
             results = []
             for entry in sent:
                 row = item(entry['candidate_id'])
@@ -332,8 +338,7 @@ def test_cluster_signature_validation_and_normalization():
 
 def test_prompt_has_valid_json_example_and_requests_semantic_signature():
     from src.ai.client import SYSTEM
-    sample = json.loads(SYSTEM.split('JSON example: ', 1)[1])
-    assert validate_batch(sample, {'id'})[0]['candidate_id'] == 'id'
+    assert 'global_impact' in SYSTEM and 'UNTRUSTED DATA' in SYSTEM
     assert 'actor|action|place|YYYY-MM-DD' in SYSTEM
     assert 'event-1' in SYSTEM and 'batch-local' in SYSTEM
 

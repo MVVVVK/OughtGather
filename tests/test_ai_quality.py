@@ -8,7 +8,7 @@ from src.ai.composition import compose
 from src.ai.editor import run
 from src.ai.schemas import score, validate_batch, validate_composition, TOPICS, REGIONS
 from src.ai.candidates import CandidateCollector
-from tests.test_ai_shadow import item, candidate, response
+from tests.test_ai_shadow import item, candidate, response, response_text
 
 
 @pytest.fixture(autouse=True)
@@ -44,7 +44,9 @@ def test_taxonomy_normalization_preserves_distinct_subjects():
     assert [r['topic'] for r in parsed] == subjects
     assert set(subjects) <= set(TOPICS) and 'africa' in REGIONS
     assert validate_batch({'items':[item(1) | {'topic':'environment'}]}, {'1'})[0]['topic'] == 'climate_environment'
-    assert 'geopolitics_diplomacy' in SYSTEM and 'global_impact' in SYSTEM
+    from src.ai.client import ARTICLE_ANALYSIS_SCHEMA
+    assert 'geopolitics_diplomacy' in ARTICLE_ANALYSIS_SCHEMA['properties']['items']['items']['properties']['topic']['enum']
+    assert 'global_impact' in SYSTEM
 
 
 def test_event_composition_benchmark_and_must_cover():
@@ -82,7 +84,7 @@ def test_composition_failure_or_budget_preserves_article_results(monkeypatch, ca
     seen = []
     def handler(request):
         payload = json.loads(request.content)
-        body = json.loads(payload['messages'][1]['content'])
+        body = json.loads(payload['input'])
         seen.append(body)
         if 'profile' not in body:
             assert all('rss_excerpt' not in row for row in body['candidates'])
@@ -117,7 +119,7 @@ def test_successful_composition_groups_cross_batch_without_leaking_data(monkeypa
     calls = []
     def handler(request):
         payload = json.loads(request.content)
-        body = json.loads(payload['messages'][1]['content'])
+        body = json.loads(payload['input'])
         calls.append(body)
         if 'profile' in body:
             cid = body['candidates'][0]['candidate_id']
@@ -125,7 +127,7 @@ def test_successful_composition_groups_cross_batch_without_leaking_data(monkeypa
         assert 'profile' not in body
         assert all('rss_excerpt' not in c and 'url' not in c for c in body['candidates'])
         result = {'events':[{'event_id':'a','members':[{'candidate_id':'1','relation':'primary'}, {'candidate_id':'2','relation':'duplicate'}]}]}
-        return httpx.Response(200, json={'choices':[{'message':{'content':json.dumps(result)}}], 'usage':{'prompt_tokens':10,'completion_tokens':10,'total_tokens':20}})
+        return httpx.Response(200, json=response_text(json.dumps(result), 10, 10))
     candidates = [candidate(1), candidate(2), candidate(3)]
     for c in candidates: c['traditional_selected'] = True
     report = run(candidates, DeepSeekClient('fake', transport=httpx.MockTransport(handler)))
@@ -139,10 +141,10 @@ def test_successful_composition_groups_cross_batch_without_leaking_data(monkeypa
 def test_invalid_composition_is_safe_fallback(monkeypatch):
     monkeypatch.setenv('AI_MAX_BATCH_CANDIDATES', '2')
     def handler(request):
-        body = json.loads(json.loads(request.content)['messages'][1]['content'])
+        body = json.loads(json.loads(request.content)['input'])
         if 'profile' in body:
             return httpx.Response(200, json=response([item(x['candidate_id']) for x in body['candidates']]))
-        return httpx.Response(200, json={'choices':[{'message':{'content':'   '}}], 'usage':{'prompt_tokens':10,'completion_tokens':0,'total_tokens':10}})
+        return httpx.Response(200, json=response_text('   ', 10, 0))
     report = run([candidate(1),candidate(2)], DeepSeekClient('fake', transport=httpx.MockTransport(handler)))
     assert report['status'] == 'ok' and report['composition_status'] == 'fallback_invalid_output'
     assert report['analyzed_count'] == 2 and report['api_calls'] == 2
@@ -170,7 +172,7 @@ def test_composition_respects_output_token_reservations(monkeypatch):
     monkeypatch.setenv('AI_MAX_OUTPUT_TOKENS', '500')
     requests = []
     def handler(request):
-        body = json.loads(json.loads(request.content)['messages'][1]['content'])
+        body = json.loads(json.loads(request.content)['input'])
         requests.append(body)
         assert 'profile' in body
         return httpx.Response(200, json=response([item(body['candidates'][0]['candidate_id'])]))
@@ -212,16 +214,16 @@ def test_batch_allowance_refund_and_composition_budget(monkeypatch, second_compl
 
     def handler(request):
         payload = json.loads(request.content)
-        body = json.loads(payload['messages'][1]['content'])
+        body = json.loads(payload['input'])
         # Before each request, prior actual usage plus the requested maximum
         # remains within the configured output and total budget.
         estimate = len(json.dumps(payload, ensure_ascii=False).encode('utf8')) + 1024
         assert actual['input'] + estimate <= 50000
-        assert actual['output'] + payload['max_tokens'] <= 7300
-        assert actual['input'] + actual['output'] + estimate + payload['max_tokens'] <= 30000
+        assert actual['output'] + payload['max_output_tokens'] <= 7300
+        assert actual['input'] + actual['output'] + estimate + payload['max_output_tokens'] <= 30000
         requests.append(payload)
         if 'profile' in body:
-            assert len(body['candidates']) == 40 and payload['max_tokens'] == 7200
+            assert len(body['candidates']) == 40 and payload['max_output_tokens'] == 7200
             rows = []
             for c in body['candidates']:
                 row = item(c['candidate_id'])
@@ -234,9 +236,7 @@ def test_batch_allowance_refund_and_composition_budget(monkeypatch, second_compl
             completion, result = 100, {'events': []}
         actual['input'] += 100
         actual['output'] += completion
-        return httpx.Response(200, json={
-            'choices': [{'message': {'content': json.dumps(result)}}],
-            'usage': {'prompt_tokens': 100, 'completion_tokens': completion, 'total_tokens': 100 + completion}})
+        return httpx.Response(200, json=response_text(json.dumps(result), 100, completion))
 
     report = run([candidate(i) for i in range(1, 81)],
                  DeepSeekClient('fake', transport=httpx.MockTransport(handler)))
@@ -257,7 +257,7 @@ def test_invalid_third_batch_reports_upstream_degradation(monkeypatch, invalid_t
 
     def handler(request):
         payload = json.loads(request.content)
-        body = json.loads(payload['messages'][1]['content'])
+        body = json.loads(payload['input'])
         assert 'profile' in body  # The composition request must not be sent.
         requests.append(body)
         if len(requests) <= 2:
@@ -273,8 +273,7 @@ def test_invalid_third_batch_reports_upstream_degradation(monkeypatch, invalid_t
             bad_rows = [item(c['candidate_id']) for c in body['candidates']]
             del bad_rows[0]['global_impact']
             content = json.dumps({'items': bad_rows})
-        return httpx.Response(200, json={'choices': [{'message': {'content': content}}],
-                                         'usage': {'prompt_tokens': 100, 'completion_tokens': 100, 'total_tokens': 200}})
+        return httpx.Response(200, json=response_text(content, 100, 100))
 
     report = run([candidate(i) for i in range(1, 121)],
                  DeepSeekClient('fake', transport=httpx.MockTransport(handler)))
@@ -289,8 +288,6 @@ def test_composition_prompt_requests_only_non_singleton_groups():
     assert 'TWO OR MORE' in COMPOSE_SYSTEM
     assert 'do not create singleton events' in COMPOSE_SYSTEM
     assert 'treated locally as singleton events' in COMPOSE_SYSTEM
-    sample = json.loads(COMPOSE_SYSTEM.split('JSON example: ', 1)[1])
-    assert len(validate_composition(sample, {'id1', 'id2'})) == 2
 
 
 def test_composition_sixty_candidates_three_groups_and_singletons(monkeypatch):
@@ -307,23 +304,22 @@ def test_composition_sixty_candidates_three_groups_and_singletons(monkeypatch):
 
     def handler(request):
         payload = json.loads(request.content)
-        body = json.loads(payload['messages'][1]['content'])
+        body = json.loads(payload['input'])
         estimate = len(json.dumps(payload, ensure_ascii=False).encode('utf8')) + 1024
-        assert actual['output'] + payload['max_tokens'] <= 12000
-        assert actual['input'] + actual['output'] + estimate + payload['max_tokens'] <= 50000
+        assert actual['output'] + payload['max_output_tokens'] <= 12000
+        assert actual['input'] + actual['output'] + estimate + payload['max_output_tokens'] <= 50000
         calls.append(payload)
         if 'profile' in body:
             data = {'items': [item(c['candidate_id']) for c in body['candidates']]}
             completion = 100
         else:
-            assert len(body['candidates']) == 60 and payload['max_tokens'] == 3600
+            assert len(body['candidates']) == 60 and payload['max_output_tokens'] == 3600
             assert all('rss_excerpt' not in row for row in body['candidates'])
-            assert 'do not create singleton events' in payload['messages'][0]['content']
+            assert 'do not create singleton events' in payload['instructions']
             data, completion = {'events': events}, 100
         actual['input'] += 100
         actual['output'] += completion
-        return httpx.Response(200, json={'choices': [{'message': {'content': json.dumps(data)}}],
-                                         'usage': {'prompt_tokens': 100, 'completion_tokens': completion, 'total_tokens': 100 + completion}})
+        return httpx.Response(200, json=response_text(json.dumps(data), 100, completion))
 
     candidates = [candidate(i) | {'traditional_selected': True} for i in range(1, 61)]
     report = run(candidates, DeepSeekClient('fake', transport=httpx.MockTransport(handler)))
@@ -345,10 +341,9 @@ def test_singleton_event_is_rejected_and_falls_back(monkeypatch):
     with pytest.raises(ValueError):
         validate_composition(singleton, {'1', '2'})
     def handler(request):
-        body = json.loads(json.loads(request.content)['messages'][1]['content'])
+        body = json.loads(json.loads(request.content)['input'])
         data = {'items': [item(c['candidate_id']) for c in body['candidates']]} if 'profile' in body else singleton
-        return httpx.Response(200, json={'choices': [{'message': {'content': json.dumps(data)}}],
-                                         'usage': {'prompt_tokens': 100, 'completion_tokens': 100, 'total_tokens': 200}})
+        return httpx.Response(200, json=response_text(json.dumps(data), 100, 100))
     report = run([candidate(1), candidate(2)], DeepSeekClient('fake', transport=httpx.MockTransport(handler)))
     assert report['status'] == 'ok' and report['composition_status'] == 'fallback_invalid_output'
     assert report['event_grouping_source'] == 'fallback_hints'
