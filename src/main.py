@@ -137,7 +137,7 @@ def _fresh_start_task(
 
 
 def _fetch_source_task(
-    source: ContentSource, tracker: DedupTracker, global_limit: int
+    source: ContentSource, tracker: DedupTracker, global_limit: int, collector=None
 ) -> Tuple[FetchResult, List[Tuple[int, str]]]:
     """Fetch one source, including two-phase filtering and dedup snapshots."""
     logger = get_logger()
@@ -206,6 +206,13 @@ def _fetch_source_task(
                         f"[两阶段(无去重)] {source.type} | {truncate_url(source.src, 40)}: "
                         f"{len(to_fetch)}/{len(candidates)} 篇待抓取"
                     )
+                if collector is not None and source.type == "rss":
+                    try:
+                        from urllib.parse import urlsplit
+                        label = source.title or urlsplit(source.src).hostname or "RSS"
+                        collector.collect(label, new_candidates, tracker.make_source_key(source))
+                    except Exception:
+                        logger.warning("AI candidate observation unavailable")
                 result = fetcher.fetch_items(to_fetch)
                 report_hook = getattr(type(fetcher), "record_candidate_outcomes", None)
                 if callable(report_hook):
@@ -461,9 +468,17 @@ def main(argv=None):
         error_log: List[str] = []
         raw_counts = {}
 
+        collector = None
+        if os.getenv("AI_EDITOR_MODE", "off") == "shadow" and (not args.test_mode or os.getenv("AI_TEST_OVERRIDE") == "true"):
+            try:
+                from src.ai.candidates import CandidateCollector
+                collector = CandidateCollector(int(os.getenv("AI_MAX_EXCERPT_CHARS") or "600"))
+            except Exception:
+                logger.warning("AI candidate observation unavailable")
         completed = _run_parallel_tasks(
             config.body,
-            lambda source: _fetch_source_task(source, tracker, config.limit),
+            lambda source: (_fetch_source_task(source, tracker, config.limit, collector) if collector is not None
+                            else _fetch_source_task(source, tracker, config.limit)),
         )
         for source, result, _records in completed:
             results.append(result)
@@ -530,6 +545,38 @@ def main(argv=None):
         # 始终保存去重数据库（确保 limit 截断标记以及新增抓取的记录得到持久化）
         logger.info("保存去重数据库...")
         tracker.save()
+
+        if collector is not None:
+            try:
+                import json
+                from hashlib import sha256
+                selected = set()
+                outcomes = {}
+                reasons = {}
+                for res in processed_results:
+                    if res.source.type == "rss":
+                        key = tracker.make_source_key(res.source)
+                        for row in res.quality_report:
+                            if row.get("url"):
+                                candidate_id = sha256((str(key) + "\0" + row["url"]).encode("utf-8")).hexdigest()
+                                outcomes[candidate_id] = row.get("status") if row.get("status") in ("full_text", "rss_content", "summary", "failed", "rejected") else "unknown"
+                                raw_reason = row.get("reason") or ""
+                                for known in ("quota_limit", "media_without_independent_text", "content_processing_empty", "historical_dedup", "retry_cooldown", "retry_exhausted", "summary_disabled"):
+                                    if known in raw_reason:
+                                        reasons[candidate_id] = known
+                                        break
+                                if row.get("included"):
+                                    selected.add(candidate_id)
+                snapshot = collector.snapshot(1000000)
+                for item in snapshot:
+                    item["traditional_selected"] = item["candidate_id"] in selected
+                    item["traditional_status"] = outcomes.get(item["candidate_id"], "unknown")
+                    item["traditional_reason"] = reasons.get(item["candidate_id"], "")
+                os.makedirs("output", exist_ok=True)
+                from src.delivery.service import _write_private
+                _write_private("output/.ai-candidates.json", json.dumps(snapshot, ensure_ascii=False).encode("utf-8"))
+            except Exception:
+                logger.warning("AI candidate snapshot unavailable")
 
         # 6. 输出执行数据汇总表格
         summary_headers = ["#", "类型", "内容源 / URL", "状态", "抓取数", "新增数", "错误数", "备注 / 错误"]

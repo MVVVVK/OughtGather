@@ -13,12 +13,24 @@ on:
         description: "Explicitly upload a plaintext EPUB artifact (visible to artifact readers)"
         type: boolean
         default: false
+      ai_editor_mode_override:
+        description: "AI editor mode (shadow runs after delivery)"
+        type: choice
+        options: [inherit, off, shadow]
+        default: inherit
+      run_ai_shadow:
+        description: "Explicitly allow AI calls during test mode"
+        type: boolean
+        default: false
       retry_failed:
         description: "Reset failed-article retry counters (published history is retained)"
         type: boolean
         default: false
   repository_dispatch:  # 支持 Cloudflare Workers 等外部触发
     types: [Daily_Gather_cf_triggerd]
+
+permissions:
+  contents: read
 
 concurrency:
   group: oughtgather-dedup
@@ -104,6 +116,10 @@ jobs:
 
       - name: Run Ought Gather
         env:
+          AI_EDITOR_MODE: ${{ inputs.ai_editor_mode_override == 'shadow' && 'shadow' || inputs.ai_editor_mode_override == 'off' && 'off' || vars.AI_EDITOR_MODE || 'off' }}
+          AI_TEST_OVERRIDE: ${{ inputs.run_ai_shadow }}
+          AI_MAX_CANDIDATES: ${{ vars.AI_MAX_CANDIDATES }}
+          AI_MAX_EXCERPT_CHARS: ${{ vars.AI_MAX_EXCERPT_CHARS }}
           # 时区设置
           TZ: Asia/Shanghai
 
@@ -154,6 +170,43 @@ jobs:
         with:
           path: data/fetched_urls.txt
           key: ${{ runner.os }}-dedup-v2-${{ github.run_id }}-${{ github.run_attempt }}
+
+      - name: Run AI Editor Shadow
+        if: ${{ success() && (!inputs.test_mode || inputs.run_ai_shadow) }}
+        continue-on-error: true
+        env:
+          AI_EDITOR_MODE: ${{ inputs.ai_editor_mode_override == 'shadow' && 'shadow' || inputs.ai_editor_mode_override == 'off' && 'off' || vars.AI_EDITOR_MODE || 'off' }}
+          DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
+          AI_MEMORY_KEY: ${{ secrets.AI_MEMORY_KEY }}
+          WEBDAV_ENABLED: "true"
+          WEBDAV_REMOTE_PATH: ${{ secrets.WEBDAV_REMOTE_PATH }}
+          WEBDAV_URL: ${{ secrets.WEBDAV_URL }}
+          WEBDAV_USERNAME: ${{ secrets.WEBDAV_USERNAME }}
+          WEBDAV_PASSWORD: ${{ secrets.WEBDAV_PASSWORD }}
+          AI_MEMORY_REMOTE_DIR: ${{ vars.AI_MEMORY_REMOTE_DIR }}
+          DEEPSEEK_MODEL: ${{ vars.DEEPSEEK_MODEL }}
+          AI_MAX_CANDIDATES: ${{ vars.AI_MAX_CANDIDATES }}
+          AI_MAX_BATCH_CANDIDATES: ${{ vars.AI_MAX_BATCH_CANDIDATES }}
+          AI_MAX_CALLS_PER_RUN: ${{ vars.AI_MAX_CALLS_PER_RUN }}
+          AI_MAX_INPUT_TOKENS: ${{ vars.AI_MAX_INPUT_TOKENS }}
+          AI_MAX_OUTPUT_TOKENS: ${{ vars.AI_MAX_OUTPUT_TOKENS }}
+          AI_MAX_TOTAL_TOKENS: ${{ vars.AI_MAX_TOTAL_TOKENS }}
+          AI_TOTAL_TIMEOUT_SECONDS: ${{ vars.AI_TOTAL_TIMEOUT_SECONDS }}
+          AI_INPUT_PRICE_PER_MILLION: ${{ vars.AI_INPUT_PRICE_PER_MILLION }}
+          AI_OUTPUT_PRICE_PER_MILLION: ${{ vars.AI_OUTPUT_PRICE_PER_MILLION }}
+          AI_PRICING_VERSION: ${{ vars.AI_PRICING_VERSION }}
+        run: python -m src.ai
+
+      - name: Upload AI editor report
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: ai-editor-report
+          path: |
+            output/ai-editor-report.json
+            output/ai-editor-summary.md
+          if-no-files-found: ignore
+          retention-days: 7
 
       - name: Upload quality report
         if: always()
