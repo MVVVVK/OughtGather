@@ -3,7 +3,7 @@ on:
   workflow_dispatch:
     inputs:
       authorize:
-        description: 'Authorize creating and deleting a random test directory at the Jianguoyun DAV root'
+        description: 'Authorize creating and deleting a random subdirectory inside the pre-created OughtGatherSmoke folder'
         type: boolean
         required: true
         default: false

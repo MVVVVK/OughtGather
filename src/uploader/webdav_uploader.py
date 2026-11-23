@@ -40,7 +40,7 @@ class WebDavUploader:
                 if code in (405, 501):
                     raise DeliveryError('unsupported', f'{method} is unsupported (HTTP {code})')
                 if code in (401, 403):
-                    raise DeliveryError('authentication', f'WebDAV HTTP {code}')
+                    raise DeliveryError('authentication', f'{method} HTTP {code} (authentication or permission denied)')
                 if code in (429, 500, 502, 503, 504):
                     if attempt < 2:
                         time.sleep(0.2 * 2 ** attempt)
@@ -50,7 +50,7 @@ class WebDavUploader:
                     raise DeliveryError('quota', 'WebDAV storage quota exceeded')
                 if 300 <= code < 400:
                     raise DeliveryError('redirect', 'WebDAV redirect refused')
-                raise DeliveryError('remote', f'WebDAV HTTP {code}')
+                raise DeliveryError('remote', f'{method} HTTP {code}')
             except httpx.TransportError as exc:
                 if attempt == 2:
                     raise DeliveryError('network', 'WebDAV connection failed') from exc
@@ -71,30 +71,37 @@ class WebDavUploader:
         self.archive = self.base + '/archive'
         self._ensure_collection(self.archive)
 
+    def _collection_exists(self, url):
+        """Only an explicit 404 proves absence; ambiguous responses fail closed."""
+        listing = self._request('PROPFIND', url + '/', headers={'Depth': '0', 'Content-Type': 'application/xml'},
+                                content=b'<d:propfind xmlns:d="DAV:"><d:prop><d:resourcetype/></d:prop></d:propfind>',
+                                allowed=(207, 404))
+        if listing.status_code == 404:
+            return False
+        try:
+            root = ElementTree.fromstring(listing.content)
+            expected = unquote(urlsplit(url).path).rstrip('/')
+            exists = any(
+                unquote(urlsplit(item.findtext('{DAV:}href', '')).path).rstrip('/') == expected
+                and any(re.search(r'\s2\d\d(?:\s|$)', prop.findtext('{DAV:}status', ''))
+                        and prop.find('{DAV:}prop/{DAV:}resourcetype/{DAV:}collection') is not None
+                        for prop in item.findall('{DAV:}propstat'))
+                for item in root.findall('{DAV:}response')
+            )
+        except ElementTree.ParseError as exc:
+            raise DeliveryError('remote', 'Invalid PROPFIND collection response') from exc
+        if not exists:
+            raise DeliveryError('remote', 'PROPFIND HTTP 207 did not confirm the requested collection')
+        return True
+
     def _ensure_collection(self, url):
-        response = self._request('MKCOL', url, allowed=(201, 405))
-        if response.status_code == 405:
-            # 405 can mean an existing directory or an unsupported MKCOL.
-            # A successful Depth: 0 listing confirms an accessible collection.
-            try:
-                listing = self._request('PROPFIND', url + '/', headers={'Depth': '0'}, allowed=(207,))
-            except DeliveryError as exc:
-                if exc.category == 'remote' and '404' in str(exc):
-                    raise DeliveryError('unsupported', 'MKCOL unavailable or collection is absent') from exc
-                raise
-            try:
-                root = ElementTree.fromstring(listing.content)
-                expected = unquote(urlsplit(url).path).rstrip('/')
-                exists = any(
-                    unquote(urlsplit(item.findtext('{DAV:}href', '')).path).rstrip('/') == expected
-                    and any(re.search(r'\s2\d\d(?:\s|$)', status.text or '')
-                            for status in item.findall('.//{DAV:}status'))
-                    for item in root.findall('{DAV:}response')
-                )
-            except ElementTree.ParseError as exc:
-                raise DeliveryError('remote', 'Invalid PROPFIND collection response') from exc
-            if not exists:
-                raise DeliveryError('unsupported', 'MKCOL unavailable or collection is absent')
+        if self._collection_exists(url):
+            return
+        result = self._request('MKCOL', url, allowed=(201, 405))
+        if result.status_code == 405:
+            # Another client may have created the directory after the 404.
+            if not self._collection_exists(url):
+                raise DeliveryError('unsupported', 'MKCOL HTTP 405; collection remains absent')
 
     def _read(self, url):
         response = self._request('GET', url, allowed=(200, 404))

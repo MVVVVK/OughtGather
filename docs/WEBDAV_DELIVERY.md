@@ -4,7 +4,7 @@
 
 Daily Gather 定时为 UTC 22:30，即北京时间每天 06:30。GitHub Actions 可能因排队延迟；它不是实时闹钟。定时运行不再因之前 18 小时内存在外部触发而跳过。外部触发、Fresh Start 和补传共用原有并发组；RSS 仍遵循 PR #3 的出版去重规则。**建议只启用一个每日定时触发器**：GitHub Actions 或 Cloudflare Worker 二选一。若启用 Worker，请从 `daily-gather.yml` 删除或注释 `on.schedule`（保留工作流启用及 `repository_dispatch`）；若使用 Actions 定时，请在 Cloudflare 禁用 Worker 的 Cron Trigger。两者同时启用可能重复运行，两次之间的新文章仍可能生成新一期。仓库中的 Cloudflare Worker 配置也改为 06:30；已经部署的 Worker 需要重新部署或手动调整，才能改变其现有定时。
 
-启用 WebDAV 后，先用独立密钥加密完整 EPUB 形成补传包，再尝试 WebDAV。远端目录下的 `archive/` 按北京时间生成带时间和 SHA-256 的文件名；原样补传使用同一文件名。成功上传后读取远端文件逐字节校验。`latest.epub` 先上传到同目录临时文件并校验，再通过 WebDAV `MOVE` 替换；覆盖前会保存并验证 `latest.previous.epub`。较旧期次的补传不会覆盖已有的较新期次。默认保留最近 30 个日历日的归档，仅删除本程序命名格式且超过期限的归档；`latest.epub`、`latest.previous.epub` 和其他文件不会被归档清理删除。清理失败记在投递状态中，不覆盖成功的投递结果。
+启用 WebDAV 后，先用独立密钥加密完整 EPUB 形成补传包，再尝试 WebDAV。正式远端目录（例如 `DailyWorldBriefing`）建议先在坚果云网页创建。上传器先以 PROPFIND 检查目录，仅在明确收到 404 时才尝试创建其内部缺失目录（包括 `archive`）；400、403、405 不会被无条件视为成功。远端目录下的 `archive/` 按北京时间生成带时间和 SHA-256 的文件名；原样补传使用同一文件名。成功上传后读取远端文件逐字节校验。`latest.epub` 先上传到同目录临时文件并校验，再通过 WebDAV `MOVE` 替换；覆盖前会保存并验证 `latest.previous.epub`。较旧期次的补传不会覆盖已有的较新期次。默认保留最近 30 个日历日的归档，仅删除本程序命名格式且超过期限的归档；`latest.epub`、`latest.previous.epub` 和其他文件不会被归档清理删除。清理失败记在投递状态中，不覆盖成功的投递结果。
 
 这些保证依赖 WebDAV 服务端正确实现 `MKCOL`、`PROPFIND`、`GET`、`PUT` 和支持覆盖的原子 `MOVE`。网络断开可能发生在服务器处理请求之后、客户端收到响应之前；此时结果可能不确定，应使用同一个补传包重试。替换后的校验失败时程序会尝试恢复上期；服务器或其他客户端并发修改、非原子 MOVE、服务端损坏或故障期间无法恢复时，无法承诺分布式事务，`latest.previous.epub` 仍保留上一期的额外副本。请先用个人坚果云账户验证操作与权限。
 
@@ -50,8 +50,15 @@ Daily Gather 定时为 UTC 22:30，即北京时间每天 06:30。GitHub Actions 
 
 ## 独立的坚果云冒烟测试
 
-这是单独的测试程序，不会抓取 RSS、读取或修改去重记录、读取 `WEBDAV_REMOTE_PATH` 或访问 `latest.epub`。程序只接受 HTTPS 的 `https://dav.jianguoyun.com/dav/` 根地址；在根目录创建随机的 `oughtgather-smoke-<随机值>` 临时目录，用固定测试字节验证 MKCOL、PUT、GET、PROPFIND、MOVE（新建及覆盖）和 DELETE，然后删除本次创建的对象。不会进入正式 `DailyWorldBriefing` 目录。用户应先确认使用的坚果云账户和根目录，明确授权后才运行。
+这是单独的测试程序，不会抓取 RSS、读取或修改去重记录、读取 `WEBDAV_REMOTE_PATH` 或访问 `latest.epub`。程序只接受 HTTPS 的 `https://dav.jianguoyun.com/dav/` 根地址；用户需先通过坚果云网页在根目录创建专用文件夹 `OughtGatherSmoke`。程序先通过 PROPFIND 确认它是可访问的文件夹，然后仅在其中创建 `t-<12位随机十六进制>` 临时子目录，用固定测试字节验证 MKCOL、PUT、GET、PROPFIND、MOVE（新建及覆盖）和 DELETE；只清理本次子目录，不删除预建文件夹。不会进入正式 `DailyWorldBriefing` 目录。用户应先确认使用的坚果云账户和根目录，明确授权后才运行。
 
-合并后可手动运行 **Isolated WebDAV Smoke Test**，必须勾选 `authorize`。它只使用已有 `WEBDAV_URL`、`WEBDAV_USERNAME`、`WEBDAV_PASSWORD` Secrets，不使用正式目录配置或其他 Secrets。GitHub 通常要求手动工作流先存在于默认分支；合并前可以在检出 PR 分支后使用本地方式验证：通过安全的环境变量机制提供这三个值，再运行 `python -m src.uploader.webdav_smoke --authorize-isolated`。不要把密码写进命令行或终端历史。
+手动验证步骤：
 
-报告只显示操作、状态、随机测试目录名和清理错误，不显示认证信息、URL 或服务端响应正文。HTTP 405/501 会明确标记操作不受支持；失败后只尝试清理本次成功创建的测试目录和固定测试文件。如果 `cleanup_errors` 非空，请在坚果云**根目录**手动检查报告中对应的随机 `oughtgather-smoke-...` 目录并移除它；不要操作正式新闻目录。服务端不支持所需操作时不要启用正式投递。
+1. 在坚果云网页的根目录预先创建 `OughtGatherSmoke`。它不是正式的 `DailyWorldBriefing` 文件夹。
+2. 在 GitHub Actions 选择 **Isolated WebDAV Smoke Test → Run workflow**。本修复合并前，请明确选择修复分支 `codex/jianguoyun-dav-compat`；不要选择仍含旧测试的 `main`。合并后可选择 `main`。
+3. 确认账户和路径后，明确勾选 `authorize` 并运行。它只使用已有 `WEBDAV_URL`、`WEBDAV_USERNAME`、`WEBDAV_PASSWORD` Secrets，不使用正式目录配置或其他 Secrets。
+4. 查看运行日志中的操作状态及 `residual_path`；如果父文件夹不存在，先在网页创建后再手动运行。
+
+也可在检出修复分支后本地验证：通过安全的环境变量机制提供这三个值，再运行 `python -m src.uploader.webdav_smoke --authorize-isolated`。不要把密码写进命令行或终端历史。
+
+报告只显示操作及其 HTTP 状态、失败原因、可能残留的随机子目录路径与清理结果，不显示认证信息、URL 或服务端响应正文。HTTP 405 表示操作不允许或不支持（MKCOL 也可能是同名目录已存在），501 表示不支持；失败后只尝试清理本次成功创建的测试目录和固定测试文件。`residual_path` 非空表示可能有残留：如果 `cleanup_errors` 非空，请检查 `OughtGatherSmoke/t-...` 并仅在确认属于本次测试时移除该子目录；如果 MKCOL 未确认成功，程序不会自动删除可能已存在的目录，需人工确认。不要删除 `OughtGatherSmoke` 或操作正式新闻目录。服务端不支持所需操作时不要启用正式投递。

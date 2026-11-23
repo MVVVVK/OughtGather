@@ -65,7 +65,7 @@ class FakeDAV:
                 if path.rstrip('/') not in self.dirs:
                     return httpx.Response(404)
                 body = ('<d:multistatus xmlns:d="DAV:"><d:response><d:href>' + path +
-                        '</d:href><d:propstat><d:status>HTTP/1.1 200 OK</d:status>'
+                        '</d:href><d:propstat><d:prop><d:resourcetype><d:collection/></d:resourcetype></d:prop><d:status>HTTP/1.1 200 OK</d:status>'
                         '</d:propstat></d:response></d:multistatus>')
                 return httpx.Response(207, content=body.encode())
             children = ''.join('<d:response><d:href>' + name + '</d:href></d:response>'
@@ -132,7 +132,7 @@ def test_network_retries_and_auth_does_not_retry(dav, tmp_path):
     book.write_bytes(b'new')
     server.transient = 2
     assert uploader.upload_epub(str(book), edition(b'new'))
-    assert len([c for c in server.calls if c[0] == 'MKCOL']) >= 4
+    assert len([c for c in server.calls if c[0] == 'PROPFIND']) >= 5
     server.calls.clear()
     server.fail_status = 401
     assert not uploader.upload_epub(str(book), edition(b'new'))
@@ -497,3 +497,108 @@ def test_quota_error_is_classified_without_retry(dav, tmp_path):
     book.write_bytes(b'book')
     assert not uploader.upload_epub(str(book), edition(b'book'))
     assert uploader.last_error == 'quota' and len(server.calls) == 1
+
+
+def test_existing_daily_and_archive_collections_are_reused_without_mkcol(tmp_path):
+    fake = FakeDAV()
+    fake.dirs.update({'/dav/DailyWorldBriefing', '/dav/DailyWorldBriefing/archive'})
+    fake.files['/dav/DailyWorldBriefing/latest.epub'] = b'old'
+    config = WebDavConfig(enabled=True, url='https://dav.example/dav', username='u', password='p', remote_path='/DailyWorldBriefing')
+    book = tmp_path / 'book.epub'
+    book.write_bytes(b'new')
+    with patch('src.uploader.webdav_uploader.get_webdav_config', return_value=config), \
+         httpx.Client(transport=httpx.MockTransport(fake)) as client:
+        uploader = WebDavUploader(client=client)
+        assert uploader.upload_epub(str(book), edition(b'new'))
+    assert not any(method == 'MKCOL' for method, _ in fake.calls)
+    assert ('PROPFIND', '/dav/DailyWorldBriefing/') in fake.calls
+    assert ('PROPFIND', '/dav/DailyWorldBriefing/archive/') in fake.calls
+    assert fake.files['/dav/DailyWorldBriefing/latest.previous.epub'] == b'old'
+
+
+def test_existing_daily_collection_creates_archive_without_root_mkcol(tmp_path):
+    class RootRestricted(FakeDAV):
+        def __call__(self, request):
+            path = request.url.path.rstrip('/')
+            if request.method in ('MKCOL', 'DELETE') and path.count('/') == 2:
+                self.calls.append((request.method, path))
+                return httpx.Response(400)
+            return super().__call__(request)
+    fake = RootRestricted()
+    fake.dirs.add('/dav/DailyWorldBriefing')
+    fake.files['/dav/DailyWorldBriefing/latest.epub'] = b'old'
+    config = WebDavConfig(enabled=True, url='https://dav.example/dav', username='u', password='p', remote_path='/DailyWorldBriefing')
+    book = tmp_path / 'book.epub'
+    book.write_bytes(b'new')
+    with patch('src.uploader.webdav_uploader.get_webdav_config', return_value=config), \
+         httpx.Client(transport=httpx.MockTransport(fake)) as client:
+        uploader = WebDavUploader(client=client)
+        assert uploader.upload_epub(str(book), edition(b'new'))
+    assert ('PROPFIND', '/dav/DailyWorldBriefing/archive/') in fake.calls
+    assert ('MKCOL', '/dav/DailyWorldBriefing/archive') in fake.calls
+    assert not any(method in ('MKCOL', 'DELETE') and path.rstrip('/') == '/dav/DailyWorldBriefing' for method, path in fake.calls)
+    assert fake.files['/dav/DailyWorldBriefing/latest.previous.epub'] == b'old'
+
+
+@pytest.mark.parametrize('code,category', [(400, 'remote'), (403, 'authentication'), (405, 'unsupported')])
+def test_archive_mkcol_failures_are_distinct_and_latest_is_safe(tmp_path, code, category):
+    class ArchiveMKCOLFailure(FakeDAV):
+        def __call__(self, request):
+            if request.method == 'MKCOL' and request.url.path == '/dav/DailyWorldBriefing/archive':
+                self.calls.append((request.method, request.url.path))
+                return httpx.Response(code)
+            return super().__call__(request)
+    fake = ArchiveMKCOLFailure()
+    fake.dirs.add('/dav/DailyWorldBriefing')
+    fake.files['/dav/DailyWorldBriefing/latest.epub'] = b'old'
+    config = WebDavConfig(enabled=True, url='https://dav.example/dav', username='u', password='p', remote_path='/DailyWorldBriefing')
+    book = tmp_path / 'book.epub'
+    book.write_bytes(b'new')
+    with patch('src.uploader.webdav_uploader.get_webdav_config', return_value=config), \
+         httpx.Client(transport=httpx.MockTransport(fake)) as client:
+        uploader = WebDavUploader(client=client)
+        assert not uploader.upload_epub(str(book), edition(b'new'))
+    assert uploader.last_error == category
+    assert 'MKCOL' in uploader.last_result['error_detail'] and str(code) in uploader.last_result['error_detail']
+    assert fake.files['/dav/DailyWorldBriefing/latest.epub'] == b'old'
+    assert not any(method in ('PUT', 'MOVE', 'DELETE') for method, _ in fake.calls)
+
+
+def test_mkcol_405_is_accepted_only_after_racing_directory_is_verified(tmp_path):
+    class Race(FakeDAV):
+        def __call__(self, request):
+            if request.method == 'MKCOL' and request.url.path == '/dav/DailyWorldBriefing/archive':
+                self.calls.append((request.method, request.url.path))
+                self.dirs.add(request.url.path)
+                return httpx.Response(405)
+            return super().__call__(request)
+    fake = Race()
+    fake.dirs.add('/dav/DailyWorldBriefing')
+    config = WebDavConfig(enabled=True, url='https://dav.example/dav', username='u', password='p', remote_path='/DailyWorldBriefing')
+    book = tmp_path / 'book.epub'
+    book.write_bytes(b'new')
+    with patch('src.uploader.webdav_uploader.get_webdav_config', return_value=config), \
+         httpx.Client(transport=httpx.MockTransport(fake)) as client:
+        assert WebDavUploader(client=client).upload_epub(str(book), edition(b'new'))
+    assert fake.calls.count(('PROPFIND', '/dav/DailyWorldBriefing/archive/')) >= 2
+
+
+def test_ambiguous_207_never_creates_directory_or_touches_latest(tmp_path):
+    class Ambiguous(FakeDAV):
+        def __call__(self, request):
+            if request.method == 'PROPFIND':
+                self.calls.append((request.method, request.url.path))
+                return httpx.Response(207, content=b'<d:multistatus xmlns:d="DAV:"/>')
+            return super().__call__(request)
+    fake = Ambiguous()
+    fake.files['/dav/DailyWorldBriefing/latest.epub'] = b'old'
+    config = WebDavConfig(enabled=True, url='https://dav.example/dav', username='u', password='p', remote_path='/DailyWorldBriefing')
+    book = tmp_path / 'book.epub'
+    book.write_bytes(b'new')
+    with patch('src.uploader.webdav_uploader.get_webdav_config', return_value=config), \
+         httpx.Client(transport=httpx.MockTransport(fake)) as client:
+        uploader = WebDavUploader(client=client)
+        assert not uploader.upload_epub(str(book), edition(b'new'))
+    assert uploader.last_error == 'remote' and 'PROPFIND' in uploader.last_result['error_detail']
+    assert not any(method in ('MKCOL', 'PUT', 'MOVE', 'DELETE') for method, _ in fake.calls)
+    assert fake.files['/dav/DailyWorldBriefing/latest.epub'] == b'old'
