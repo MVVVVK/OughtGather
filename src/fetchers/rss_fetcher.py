@@ -183,6 +183,7 @@ class RSSFetcher(BaseFetcher):
 
             # 保存 feed 级别的标题供 fetch_items 使用
             self._cached_source_title = feed.feed.get("title", "")
+            self._cached_feed_language = feed.feed.get("language", "")
 
             self.logger.info(
                 f"[fetch_list] RSS feed 共 {len(feed.entries)} 条"

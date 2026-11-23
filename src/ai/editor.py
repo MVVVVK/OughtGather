@@ -8,8 +8,13 @@ import unicodedata
 from collections import Counter
 from datetime import date, datetime, timezone
 from .client import DeepSeekClient, ProviderError
-from .schemas import validate_batch
+from .schemas import validate_batch, validate_composition
+from .composition import compose
 from .memory.storage import load_profile
+
+
+class CompositionBudgetExceeded(Exception):
+    pass
 
 
 def setting(name, default, ceiling):
@@ -66,6 +71,7 @@ def run(candidates, client=None):
     client = client or DeepSeekClient(key, model)
     profile, revision, status = load_profile()
     report.update(memory_revision=revision, memory_status=status, status='ok')
+    personalized = any(profile.get(k) for k in ('hard_rules', 'soft_rules', 'prefer_signals', 'deprioritize_signals'))
     cap = setting('AI_MAX_CANDIDATES', 200, 1000)
     batch_size = max(1, setting('AI_MAX_BATCH_CANDIDATES', 40, 100))
     max_calls = setting('AI_MAX_CALLS_PER_RUN', 6, 100)
@@ -75,6 +81,9 @@ def run(candidates, client=None):
     deadline = started + setting('AI_TOTAL_TIMEOUT_SECONDS', 60, 300)
     selected = [c['candidate_id'] for c in candidates if c.get('traditional_selected')]
     candidate_truncated = len(candidates) > cap
+    report.update(candidate_cap=cap, skipped_candidate_cap=max(0, len(candidates)-cap),
+                  coverage_status='candidate_cap_reached' if candidate_truncated else 'complete',
+                  composition_status='not_needed', composition_candidate_count=0)
     all_candidates = candidates
     candidates = candidates[:cap]
     report['traditional_selected'] = selected
@@ -110,21 +119,16 @@ def run(candidates, client=None):
                 reserved_input += usage['prompt_tokens'] - estimate
                 reserved_output += usage['completion_tokens'] - max_tokens
                 # Discard free-form reason: it could echo private profile or adversarial content.
-                parsed = validate_batch(data, {c['candidate_id'] for c in batch})
-                allowed = {
-                    'topic': {'politics', 'economy', 'law', 'culture', 'society', 'climate', 'health', 'science', 'conflict', 'international'},
-                    'region': {'africa', 'middle east', 'europe', 'asia', 'americas', 'world', 'international'},
-                    'news_type': {'news', 'analysis', 'opinion', 'feature', 'investigation', 'interview', 'report'}}
+                parsed = validate_batch(data, {c['candidate_id'] for c in batch}, personalized=personalized)
+                allowed_news_types = {'news', 'analysis', 'opinion', 'feature', 'investigation', 'interview', 'report'}
                 by_candidate = {c['candidate_id']: c for c in batch}
                 for item in parsed:
-                    strengths = sorted(('importance', 'expected_depth', 'novelty', 'timeliness', 'perspective_value'), key=lambda name: (-item[name], name))[:2]
+                    strengths = sorted(('importance', 'global_impact', 'expected_depth', 'information_gain', 'timeliness', 'perspective_value'), key=lambda name: (-item[name], name))[:2]
                     item['reason'] = 'Local score basis: ' + ', '.join(f'{name}={item[name]}' for name in strengths)
                     candidate = by_candidate[item['candidate_id']]
                     if len(candidate.get('rss_excerpt') or '') < 80 and len(candidate.get('title') or '') < 30:
                         item['confidence'] = 'low'
-                    for field, values in allowed.items():
-                        label = item[field].strip().lower()
-                        item[field] = label if label in values else 'other'
+                    item['news_type'] = item['news_type'].strip().lower() if item['news_type'].strip().lower() in allowed_news_types else 'other'
                     item['event_cluster'] = cluster_id(item['event_cluster'], start)
                 rankings.extend(parsed)
                 if (report['prompt_tokens'] > input_cap or report['completion_tokens'] > output_cap or report['total_tokens'] > total_cap):
@@ -141,37 +145,60 @@ def run(candidates, client=None):
                     report.update(status='degraded', fallback_reason='invalid_model_output', failed_count=report['failed_count'] + len(batch))
         if report['status'] != 'ok':
             break
-    if candidate_truncated and report['status'] == 'ok':
-        report['status'] = 'budget_exhausted'
-    report['skipped_budget'] = max(0, report['candidate_count'] - len(rankings) - report['failed_count']) if report['status'] == 'budget_exhausted' else max(0, report['candidate_count'] - cap)
+    report['skipped_budget'] = max(0, min(report['candidate_count'], cap) - len(rankings) - report['failed_count']) if report['status'] == 'budget_exhausted' else 0
     rankings.sort(key=lambda x: (-x['score'], x['candidate_id']))
-    # Reserve exploration positions for important stories outside the profile.
-    k = len(selected)
-    exploration_count = k // 5
-    chosen = []
-    for row in sorted(rankings, key=lambda x: (-x['importance'], -x['score'], x['candidate_id'])):
-        if len(chosen) >= exploration_count:
-            break
-        if row['importance'] >= 75 and row['personal_fit'] <= 50:
-            chosen.append(row)
-    # Where alternatives exist, limit one region or topic to half the recommendations.
-    cap_per_group = max(1, (k + 1) // 2)
-    for strict in (True, False):
-        for row in rankings:
-            if len(chosen) >= k:
-                break
-            if row in chosen:
-                continue
-            if strict and any(sum(c[group] == row[group] for c in chosen) >= cap_per_group
-                              for group in ('region', 'topic') if row[group] != 'other'):
-                continue
-            chosen.append(row)
-    recommended = [x['candidate_id'] for x in chosen]
     by_id = {c['candidate_id']: c for c in candidates}
-    for item in rankings:
-        candidate = by_id[item['candidate_id']]
-        item['title'] = candidate['title']
-        item['source'] = candidate['source']
+    for row in rankings:
+        candidate = by_id[row['candidate_id']]
+        row['title'], row['source'] = candidate['title'], candidate['source']
+
+    mappings = {}
+    compose_cap = setting('AI_COMPOSE_MAX_CANDIDATES', 60, 100)
+    to_compose = rankings[:compose_cap]
+    report['composition_candidate_count'] = len(to_compose)
+    if len(to_compose) >= 2:
+        clean_composition = [{k: row.get(k) for k in ('candidate_id','title','source','topic','region','news_type',
+                                                      'importance','global_impact','score','event_cluster')} for row in to_compose]
+        desired = max(256, len(to_compose) * 45)
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            report['composition_status'] = 'fallback_timeout'
+        elif report['status'] != 'ok' or report['api_calls'] >= max_calls or desired > output_cap - reserved_output:
+            report['composition_status'] = 'fallback_budget'
+        else:
+            try:
+                payload = client.composition_payload(clean_composition, desired)
+                estimate = len(json.dumps(payload, ensure_ascii=False).encode('utf8')) + 1024
+                if (reserved_input + estimate > input_cap or reserved_input + reserved_output + estimate + desired > total_cap):
+                    report['composition_status'] = 'fallback_budget'
+                else:
+                    report['api_calls'] += 1
+                    reserved_input += estimate
+                    reserved_output += desired
+                    data, usage = client.analyze_batch(payload, remaining)
+                    for name in ('prompt_tokens','completion_tokens','total_tokens'):
+                        report[name] += usage[name]
+                    reserved_input += usage['prompt_tokens'] - estimate
+                    reserved_output += usage['completion_tokens'] - desired
+                    if report['prompt_tokens'] > input_cap or report['completion_tokens'] > output_cap or report['total_tokens'] > total_cap:
+                        raise CompositionBudgetExceeded()
+                    mappings = validate_composition(data, {r['candidate_id'] for r in to_compose})
+                    # Missing candidates are always singletons, not model-deleted.
+                    mappings = {cid: ('model:' + event, relation) for cid, (event, relation) in mappings.items()}
+                    for row in to_compose:
+                        mappings.setdefault(row['candidate_id'], ('singleton:' + row['candidate_id'], 'primary'))
+                    report['composition_status'] = 'ok'
+            except CompositionBudgetExceeded:
+                report['composition_status'] = 'fallback_budget'
+            except ProviderError as exc:
+                report['composition_status'] = ('fallback_timeout' if exc.category == 'timeout' else
+                                                'fallback_invalid_output' if exc.category in ('invalid_response', 'invalid_usage') else 'fallback_provider')
+            except (ValueError, TypeError, KeyError, AttributeError):
+                report['composition_status'] = 'fallback_invalid_output'
+            except Exception:
+                report['composition_status'] = 'fallback_unavailable'
+    recommended, diagnostics = compose(rankings, mappings, len(selected), max(1, setting('AI_MAX_ARTICLES_PER_EVENT', 2, 2)))
+    report.update(diagnostics)
     report['analyzed_count'], report['ranking'], report['ai_recommended'] = len(rankings), rankings, recommended
     report['agreement'] = [x for x in recommended if x in selected]
     report['ai_only'] = [x for x in recommended if x not in selected]
@@ -179,11 +206,6 @@ def run(candidates, client=None):
     report['topic_distribution'] = dict(Counter(x['topic'] for x in rankings))
     report['region_distribution'] = dict(Counter(x['region'] for x in rankings))
     report['language_distribution'] = dict(Counter(c.get('language') or 'unknown' for c in candidates))
-    clusters = {}
-    for item in rankings:
-        if item['event_cluster']:
-            clusters.setdefault(item['event_cluster'], []).append({'candidate_id': item['candidate_id'], 'type': item['cluster_type']})
-    report['event_clusters'] = {k: v for k, v in clusters.items() if len(v) > 1}
     try:
         in_price = float(os.environ['AI_INPUT_PRICE_PER_MILLION'])
         out_price = float(os.environ['AI_OUTPUT_PRICE_PER_MILLION'])

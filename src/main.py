@@ -210,7 +210,9 @@ def _fetch_source_task(
                     try:
                         from urllib.parse import urlsplit
                         label = source.title or urlsplit(source.src).hostname or "RSS"
-                        collector.collect(label, new_candidates, tracker.make_source_key(source))
+                        collector.collect(label, new_candidates, tracker.make_source_key(source),
+                                          getattr(fetcher, "_cached_feed_language", None),
+                                          (source.metadata or {}).get("language"))
                     except Exception:
                         logger.warning("AI candidate observation unavailable")
                 result = fetcher.fetch_items(to_fetch)

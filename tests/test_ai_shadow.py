@@ -13,7 +13,7 @@ def candidate(i=1):
 
 def item(i):
     return {'candidate_id': str(i), 'topic': 'politics', 'region': 'africa', 'news_type': 'analysis',
-            'importance': 90, 'expected_depth': 80, 'novelty': 70, 'personal_fit': 50, 'timeliness': 60,
+            'importance': 90, 'global_impact': 80, 'expected_depth': 80, 'information_gain': 70, 'impact_scope': 'global', 'personal_fit': 50, 'timeliness': 60,
             'perspective_value': 70, 'confidence': 'medium', 'event_cluster': 'event', 'cluster_type': 'analysis', 'reason': 'context'}
 
 
@@ -198,7 +198,7 @@ def test_candidate_cap_is_applied_before_provider(monkeypatch):
         requests.append(json.loads(request.content))
         return httpx.Response(200, json=response([item(1)]))
     result = run([candidate(1), candidate(2)], DeepSeekClient('x', transport=httpx.MockTransport(handler)))
-    assert result['status'] == 'budget_exhausted' and result['skipped_budget'] == 1
+    assert result['status'] == 'ok' and result['skipped_candidate_cap'] == 1
     payload = json.loads(requests[0]['messages'][1]['content'])
     assert len(payload['candidates']) == 1
 
