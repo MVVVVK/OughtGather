@@ -2,7 +2,7 @@ name: Daily Gather
 
 on:
   schedule:
-    - cron: '37 7 * * *'
+    - cron: '30 22 * * *'  # 06:30 Asia/Shanghai (UTC+8)
   workflow_dispatch:  # 支持手动触发
     inputs:
       test_mode:
@@ -21,47 +21,7 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  check:
-    runs-on: ubuntu-latest
-    outputs:
-      should_run: ${{ steps.check.outputs.should_run }}
-    steps:
-      - name: Check 18h cooldown for scheduled run
-        id: check
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          if [ "${{ github.event_name }}" != "schedule" ]; then
-            echo "should_run=true" >> $GITHUB_OUTPUT
-            exit 0
-          fi
-          
-          # Fetch the last repository_dispatch run
-          LAST_RUN=$(gh run list --repo ${{ github.repository }} --workflow "${{ github.workflow }}" --event repository_dispatch --json createdAt --limit 1 --jq '.[0].createdAt' 2>/dev/null || echo "")
-          
-          SHOULD_RUN=$(LAST_RUN="$LAST_RUN" python3 -c "
-          import os, sys, datetime
-          last_run_str = os.environ.get('LAST_RUN', '')
-          if not last_run_str or last_run_str == 'null' or not last_run_str.strip():
-              print('true')
-              sys.exit(0)
-          try:
-              if last_run_str.endswith('Z'):
-                  last_run_str = last_run_str[:-1] + '+00:00'
-              last_run = datetime.datetime.fromisoformat(last_run_str)
-              now = datetime.datetime.now(datetime.timezone.utc)
-              if now - last_run < datetime.timedelta(hours=18):
-                  print('false')
-              else:
-                  print('true')
-          except Exception:
-              print('true')
-          ")
-          echo "should_run=$SHOULD_RUN" >> $GITHUB_OUTPUT
-
   gather:
-    needs: check
-    if: needs.check.outputs.should_run == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 10
 
@@ -149,6 +109,9 @@ jobs:
           SMTP_USERNAME: ${{ secrets.SMTP_USERNAME }}
           SMTP_PASSWORD: ${{ secrets.SMTP_PASSWORD }}
           KINDLE_EMAIL: ${{ secrets.KINDLE_EMAIL }}
+          EMAIL_RECIPIENT: ${{ secrets.EMAIL_RECIPIENT }}
+          EMAIL_FALLBACK_ATTACHMENT: ${{ secrets.EMAIL_FALLBACK_ATTACHMENT }}
+          DELIVERY_BACKUP_KEY: ${{ secrets.DELIVERY_BACKUP_KEY }}
 
           # WebDAV 配置
           WEBDAV_ENABLED: ${{ secrets.WEBDAV_ENABLED }}
@@ -156,6 +119,7 @@ jobs:
           WEBDAV_REMOTE_PATH: ${{ secrets.WEBDAV_REMOTE_PATH }}
           WEBDAV_URL: ${{ secrets.WEBDAV_URL }}
           WEBDAV_USERNAME: ${{ secrets.WEBDAV_USERNAME }}
+          WEBDAV_RETENTION_DAYS: ${{ secrets.WEBDAV_RETENTION_DAYS }}
 
           # EPUB localization and Bing wallpaper market (optional)
           EPUB_LANGUAGE: ${{ secrets.EPUB_LANGUAGE }}
@@ -198,6 +162,24 @@ jobs:
           if-no-files-found: ignore
           retention-days: 7
 
+      - name: Upload encrypted delivery backup
+        if: ${{ always() && !inputs.test_mode }}
+        uses: actions/upload-artifact@v6
+        with:
+          name: delivery-retry-${{ github.run_id }}-${{ github.run_attempt }}
+          path: output/delivery-retry.enc
+          if-no-files-found: ignore
+          retention-days: 30
+
+      - name: Upload delivery status
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: delivery-status
+          path: output/delivery-status.json
+          if-no-files-found: ignore
+          retention-days: 7
+
       - name: Upload EPUB artifact
         # 仅在手动触发时上传 EPUB，自动触发（外部触发器或 cron 定时）不上传
         if: github.event_name == 'workflow_dispatch'
@@ -226,3 +208,10 @@ jobs:
           path: logs/*.log
           if-no-files-found: ignore
           retention-days: 3
+
+      - name: Check delivery status
+        if: ${{ always() && !inputs.test_mode }}
+        run: |
+          if [ -f output/delivery-status.json ]; then
+            python -c "import json,sys; sys.exit(1 if json.load(open('output/delivery-status.json'))['webdav'] == 'failed' else 0)"
+          fi

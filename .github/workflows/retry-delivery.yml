@@ -1,0 +1,63 @@
+name: Retry WebDAV Delivery
+on:
+  workflow_dispatch:
+    inputs:
+      run_id:
+        description: 'Original Daily Gather run ID'
+        required: true
+        type: string
+      attempt:
+        description: 'Original run attempt number (usually 1)'
+        required: true
+        default: '1'
+        type: string
+permissions:
+  contents: read
+  actions: read
+concurrency:
+  group: oughtgather-dedup
+  cancel-in-progress: false
+jobs:
+  retry:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.11'
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+      - name: Download encrypted backup
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ORIGINAL_RUN: ${{ inputs.run_id }}
+          ORIGINAL_ATTEMPT: ${{ inputs.attempt }}
+        run: |
+          [[ "$ORIGINAL_RUN" =~ ^[0-9]+$ && "$ORIGINAL_ATTEMPT" =~ ^[0-9]+$ ]] || exit 1
+          gh run download "$ORIGINAL_RUN" --repo "$GITHUB_REPOSITORY" --name "delivery-retry-$ORIGINAL_RUN-$ORIGINAL_ATTEMPT" --dir retry-input
+      - name: Retry same edition
+        env:
+          DELIVERY_BACKUP_KEY: ${{ secrets.DELIVERY_BACKUP_KEY }}
+          WEBDAV_ENABLED: ${{ secrets.WEBDAV_ENABLED }}
+          WEBDAV_URL: ${{ secrets.WEBDAV_URL }}
+          WEBDAV_USERNAME: ${{ secrets.WEBDAV_USERNAME }}
+          WEBDAV_PASSWORD: ${{ secrets.WEBDAV_PASSWORD }}
+          WEBDAV_REMOTE_PATH: ${{ secrets.WEBDAV_REMOTE_PATH }}
+          WEBDAV_RETENTION_DAYS: ${{ secrets.WEBDAV_RETENTION_DAYS }}
+          SMTP_HOST: ${{ secrets.SMTP_HOST }}
+          SMTP_PORT: ${{ secrets.SMTP_PORT }}
+          SMTP_USERNAME: ${{ secrets.SMTP_USERNAME }}
+          SMTP_PASSWORD: ${{ secrets.SMTP_PASSWORD }}
+          KINDLE_EMAIL: ${{ secrets.KINDLE_EMAIL }}
+          EMAIL_RECIPIENT: ${{ secrets.EMAIL_RECIPIENT }}
+          EMAIL_FALLBACK_ATTACHMENT: ${{ secrets.EMAIL_FALLBACK_ATTACHMENT }}
+        run: python -m src.delivery --encrypted retry-input/delivery-retry.enc
+      - name: Upload retry status
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: delivery-retry-status
+          path: output/delivery-status.json
+          if-no-files-found: ignore
+          retention-days: 7

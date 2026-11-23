@@ -83,7 +83,7 @@ Actions -> Daily Gather -> Run workflow
 
 ### 修改运行时间
 
-通过 Cloudflare Workers 定时触发 GitHub Actions，触发时间比 GitHub 自带的 `schedule` 更精准（误差通常在 1 分钟以内）。`schedule` 保留为保底备用，且会在外部触发后 12 小时内自动跳过，避免重复执行。
+Daily Gather 的 GitHub Actions 定时为北京时间 06:30。Cloudflare Worker 可选；两者均启用时可能产生两次运行，来源去重仍会生效。已有 Worker 的定时更改需要重新部署。WebDAV 投递与安全补传见 [WebDAV 说明](docs/WEBDAV_DELIVERY.md)。
 
 ### 修改时区
 
@@ -97,7 +97,7 @@ Actions -> Daily Gather -> Run workflow
 
 ```toml
 [triggers]
-crons = ["30 23 * * *"]  # UTC 23:30，即北京时间早上 7:30
+crons = ["30 22 * * *"]  # UTC 22:30，即北京时间次日 06:30
 ```
 
 **第二步：在 Cloudflare 仪表板关联仓库**
@@ -128,7 +128,7 @@ crons = ["30 23 * * *"]  # UTC 23:30，即北京时间早上 7:30
 ```yaml
 on:
   schedule:
-    - cron: '0 0 * * *'   # UTC 00:00，北京时间约 08:00
+    - cron: '30 22 * * *'   # UTC 22:30，北京时间次日 06:30
   workflow_dispatch:
 ```
 

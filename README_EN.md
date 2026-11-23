@@ -83,7 +83,7 @@ See the [Secrets Configuration](#secrets-configuration) section below to configu
 
 ### Customizing Run Schedules
 
-We recommend triggering the workflow via Cloudflare Workers for precise cron executions (typically within 1 minute accuracy). The built-in GitHub Actions `schedule` serves as a fallback and automatically skips itself if an external run happened within the previous 12 hours to prevent duplicate deliveries.
+Daily Gather is scheduled for 06:30 Beijing time. Cloudflare Workers are optional; enabling both triggers may start two runs, with source deduplication still applied. Redeploy an existing Worker to change its schedule. See [WebDAV delivery](docs/WEBDAV_DELIVERY.md) for secure retry and setup.
 
 ### Change Time Zone
 
@@ -97,7 +97,7 @@ Change the Cron timing in `cloudflare-worker/wrangler.toml` to your desired deli
 
 ```toml
 [triggers]
-crons = ["30 23 * * *"]  # UTC 23:30, i.e., 07:30 Beijing Time (GMT+8)
+crons = ["30 22 * * *"]  # UTC 22:30, i.e., 06:30 Beijing Time on the next day
 ```
 
 **Step 2: Connect Repository on Cloudflare Dashboard**
@@ -128,7 +128,7 @@ You can also use the default trigger configured via the `cron` field under `on.s
 ```yaml
 on:
   schedule:
-    - cron: '0 0 * * *'   # UTC 00:00, approx. 08:00 Beijing Time
+    - cron: '30 22 * * *'   # UTC 22:30, 06:30 Beijing Time on the next day
   workflow_dispatch:
 ```
 
