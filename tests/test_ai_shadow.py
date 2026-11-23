@@ -45,7 +45,7 @@ def test_deepseek_protocol_and_report_privacy():
         assert body['text']['format']['name'] == 'article_analysis'
         assert body['tools'] == [] and body['store'] is False and body['background'] is False
         assert 'UNTRUSTED DATA' in body['instructions']
-        return httpx.Response(200, json=response([item(1)]))
+        return httpx.Response(200, json=response([item('c01')]))
     result = run([candidate()], DeepSeekClient('PRIVATE-KEY-ABC', transport=httpx.MockTransport(handler)))
     assert result['status'] == 'ok' and result['agreement'] == ['1']
     assert result['total_tokens'] == 150 and len(calls) == 1
@@ -136,7 +136,7 @@ def test_individual_zero_budgets_prevent_calls(monkeypatch, variable):
 def test_successful_prior_batch_retained_on_call_limit(monkeypatch):
     monkeypatch.setenv('AI_MAX_CALLS_PER_RUN', '1')
     monkeypatch.setenv('AI_MAX_BATCH_CANDIDATES', '1')
-    client = DeepSeekClient('x', transport=httpx.MockTransport(lambda req: httpx.Response(200, json=response([item(1)]))))
+    client = DeepSeekClient('x', transport=httpx.MockTransport(lambda req: httpx.Response(200, json=response([item('c01')]))))
     report = run([candidate(1), candidate(2)], client)
     assert report['status'] == 'budget_exhausted' and report['analyzed_count'] == 1
     assert report['api_calls'] == 1 and report['skipped_budget'] == 1
@@ -202,7 +202,7 @@ def test_candidate_cap_is_applied_before_provider(monkeypatch):
     requests = []
     def handler(request):
         requests.append(json.loads(request.content))
-        return httpx.Response(200, json=response([item(1)]))
+        return httpx.Response(200, json=response([item('c01')]))
     result = run([candidate(1), candidate(2)], DeepSeekClient('x', transport=httpx.MockTransport(handler)))
     assert result['status'] == 'ok' and result['skipped_candidate_cap'] == 1
     payload = json.loads(requests[0]['input'])

@@ -100,7 +100,7 @@ def test_composition_failure_or_budget_preserves_article_results(monkeypatch, ca
 
 def test_candidate_cap_is_coverage_not_failure(monkeypatch):
     monkeypatch.setenv('AI_MAX_CANDIDATES','1')
-    client = DeepSeekClient('fake', transport=httpx.MockTransport(lambda req: httpx.Response(200,json=response([item(1)]))))
+    client = DeepSeekClient('fake', transport=httpx.MockTransport(lambda req: httpx.Response(200,json=response([item('c01')]))))
     report = run([candidate(1), candidate(2)], client)
     assert report['status'] == 'ok' and report['coverage_status'] == 'candidate_cap_reached'
     assert report['skipped_candidate_cap'] == 1 and report['skipped_budget'] == 0
@@ -126,7 +126,7 @@ def test_successful_composition_groups_cross_batch_without_leaking_data(monkeypa
             return httpx.Response(200, json=response([item(cid)]))
         assert 'profile' not in body
         assert all('rss_excerpt' not in c and 'url' not in c for c in body['candidates'])
-        result = {'events':[{'event_id':'a','members':[{'candidate_id':'1','relation':'primary'}, {'candidate_id':'2','relation':'duplicate'}]}]}
+        result = {'events':[{'event_id':'a','members':[{'candidate_id':'e01','relation':'primary'}, {'candidate_id':'e02','relation':'duplicate'}]}]}
         return httpx.Response(200, json=response_text(json.dumps(result), 10, 10))
     candidates = [candidate(1), candidate(2), candidate(3)]
     for c in candidates: c['traditional_selected'] = True
@@ -182,7 +182,7 @@ def test_composition_respects_output_token_reservations(monkeypatch):
 
 
 def test_empty_memory_profile_neutralizes_scores_in_report(monkeypatch):
-    returned = item(1) | {'personal_fit':100}
+    returned = item('c01') | {'personal_fit':100}
     client = DeepSeekClient('fake', transport=httpx.MockTransport(lambda req: httpx.Response(200,json=response([returned]))))
     report = run([candidate(1)], client)
     assert report['ranking'][0]['personal_fit'] == 50
@@ -195,7 +195,7 @@ def test_article_reason_is_optional_and_report_reason_is_local():
     assert 'reason' not in parsed[0]
     for returned in (without_reason, item(1) | {'reason': 'private provider output must not be reported'}):
         client = DeepSeekClient('fake', transport=httpx.MockTransport(
-            lambda request: httpx.Response(200, json=response([returned]))))
+            lambda request: httpx.Response(200, json=response([returned | {'candidate_id': 'c01'}]))))
         report = run([candidate(1)], client)
         assert report['status'] == 'ok'
         assert report['ranking'][0]['reason'].startswith('Local score basis:')
@@ -316,7 +316,11 @@ def test_composition_sixty_candidates_three_groups_and_singletons(monkeypatch):
             assert len(body['candidates']) == 60 and payload['max_output_tokens'] == 3600
             assert all('rss_excerpt' not in row for row in body['candidates'])
             assert 'do not create singleton events' in payload['instructions']
-            data, completion = {'events': events}, 100
+            ordered_ids = sorted(str(i) for i in range(1, 61))
+            short_events = [{'event_id': event['event_id'], 'members': [
+                {**member, 'candidate_id': f"e{ordered_ids.index(member['candidate_id']) + 1:02d}"}
+                for member in event['members']]} for event in events]
+            data, completion = {'events': short_events}, 100
         actual['input'] += 100
         actual['output'] += completion
         return httpx.Response(200, json=response_text(json.dumps(data), 100, completion))

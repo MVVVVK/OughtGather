@@ -10,6 +10,7 @@ from datetime import date, datetime, timezone
 from .client import DeepSeekClient, ProviderError
 from .schemas import validate_batch, validate_composition
 from .composition import compose
+from .identifiers import IdentifierError, shorten, restore_articles, restore_composition
 from .memory.storage import load_profile
 
 
@@ -100,7 +101,8 @@ def run(candidates, client=None):
         max_tokens = min(desired_output, output_cap - reserved_output, total_cap - reserved_input - reserved_output)
         if max_tokens < desired_output:
             report['status'] = 'budget_exhausted'; break
-        payload = client.payload(clean, profile, max_tokens)
+        short_batch, short_to_real = shorten(clean, 'c')
+        payload = client.payload(short_batch, profile, max_tokens)
         # UTF-8 bytes plus framing overhead conservatively bound token count for typical BPE tokenizers.
         estimate = len(json.dumps(payload, ensure_ascii=False).encode('utf8')) + 1024
         for attempt in range(2):
@@ -120,6 +122,7 @@ def run(candidates, client=None):
                 reserved_input += usage['prompt_tokens'] - estimate
                 reserved_output += usage['completion_tokens'] - max_tokens
                 # Discard free-form reason: it could echo private profile or adversarial content.
+                data = restore_articles(data, short_to_real)
                 parsed = validate_batch(data, {c['candidate_id'] for c in batch}, personalized=personalized)
                 allowed_news_types = {'news', 'analysis', 'opinion', 'feature', 'investigation', 'interview', 'report'}
                 by_candidate = {c['candidate_id']: c for c in batch}
@@ -151,9 +154,13 @@ def run(candidates, client=None):
                     report.update(status='degraded', fallback_reason=reason, http_status=exc.status, failed_count=report['failed_count'] + len(batch)); break
                 if exc.retry_after:
                     time.sleep(exc.retry_after)
-            except (ValueError, TypeError, KeyError):
+            except (ValueError, TypeError, KeyError) as exc:
                 if attempt:
-                    report.update(status='degraded', fallback_reason='invalid_model_output', failed_count=report['failed_count'] + len(batch))
+                    reasons = {'incomplete output': 'item_count', 'invalid id': 'unknown_candidate_id',
+                               'invalid field': 'invalid_field', 'invalid score': 'invalid_field', 'invalid enum': 'invalid_enum'}
+                    category = exc.category if isinstance(exc, IdentifierError) else reasons.get(str(exc), 'invalid_field')
+                    report.update(status='degraded', fallback_reason='invalid_model_output',
+                                  local_validation_reason=category, failed_count=report['failed_count'] + len(batch))
         if report['status'] != 'ok':
             break
     report['skipped_budget'] = max(0, min(report['candidate_count'], cap) - len(rankings) - report['failed_count']) if report['status'] == 'budget_exhausted' else 0
@@ -180,7 +187,8 @@ def run(candidates, client=None):
             report['composition_status'] = 'fallback_budget'
         else:
             try:
-                payload = client.composition_payload(clean_composition, desired)
+                short_composition, composition_ids = shorten(clean_composition, 'e')
+                payload = client.composition_payload(short_composition, desired)
                 estimate = len(json.dumps(payload, ensure_ascii=False).encode('utf8')) + 1024
                 if (reserved_input + estimate > input_cap or reserved_input + reserved_output + estimate + desired > total_cap):
                     report['composition_status'] = 'fallback_budget'
@@ -197,6 +205,7 @@ def run(candidates, client=None):
                     reserved_output += usage['completion_tokens'] - desired
                     if report['prompt_tokens'] > input_cap or report['completion_tokens'] > output_cap or report['total_tokens'] > total_cap:
                         raise CompositionBudgetExceeded()
+                    data = restore_composition(data, composition_ids)
                     mappings = validate_composition(data, {r['candidate_id'] for r in to_compose})
                     # Missing candidates are always singletons, not model-deleted.
                     mappings = {cid: ('model:' + event, relation) for cid, (event, relation) in mappings.items()}
