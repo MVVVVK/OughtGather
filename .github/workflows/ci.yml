@@ -53,13 +53,15 @@ jobs:
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
       - uses: actions/setup-python@v6
         with:
           python-version: "3.11"
       - name: Install diagnostic dependencies
         run: python -m pip install 'feedparser>=6,<7' 'httpx>=0.25,<1' 'pytest>=7,<10'
       - name: Test diagnostics offline
-        run: python -m pytest scripts/rss_diagnostics/test_rss_probe.py -q
+        run: python -m pytest -o addopts= scripts/rss_diagnostics/test_rss_probe.py -q
       - name: Probe public feeds without credentials
         run: python scripts/rss_diagnostics/rss_probe.py scripts/rss_diagnostics/sources.json rss-diagnostic.json
       - name: Upload sanitized diagnostic results
