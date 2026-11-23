@@ -183,3 +183,101 @@ def test_empty_memory_profile_neutralizes_scores_in_report(monkeypatch):
     client = DeepSeekClient('fake', transport=httpx.MockTransport(lambda req: httpx.Response(200,json=response([returned]))))
     report = run([candidate(1)], client)
     assert report['ranking'][0]['personal_fit'] == 50
+
+
+def test_article_reason_is_optional_and_report_reason_is_local():
+    without_reason = item(1)
+    del without_reason['reason']
+    parsed = validate_batch({'items': [without_reason]}, {'1'})
+    assert 'reason' not in parsed[0]
+    for returned in (without_reason, item(1) | {'reason': 'private provider output must not be reported'}):
+        client = DeepSeekClient('fake', transport=httpx.MockTransport(
+            lambda request: httpx.Response(200, json=response([returned]))))
+        report = run([candidate(1)], client)
+        assert report['status'] == 'ok'
+        assert report['ranking'][0]['reason'].startswith('Local score basis:')
+        assert 'private provider output' not in json.dumps(report)
+    from src.ai.client import SYSTEM
+    assert 'reason' not in SYSTEM.lower()
+
+
+@pytest.mark.parametrize('second_completion, expected_composition', [(100, 'ok'), (7000, 'fallback_budget')])
+def test_batch_allowance_refund_and_composition_budget(monkeypatch, second_completion, expected_composition):
+    monkeypatch.setenv('AI_MAX_BATCH_CANDIDATES', '40')
+    monkeypatch.setenv('AI_MAX_OUTPUT_TOKENS', '7300')
+    monkeypatch.setenv('AI_MAX_INPUT_TOKENS', '50000')
+    monkeypatch.setenv('AI_MAX_TOTAL_TOKENS', '30000')
+    requests, actual = [], {'input': 0, 'output': 0}
+
+    def handler(request):
+        payload = json.loads(request.content)
+        body = json.loads(payload['messages'][1]['content'])
+        # Before each request, prior actual usage plus the requested maximum
+        # remains within the configured output and total budget.
+        estimate = len(json.dumps(payload, ensure_ascii=False).encode('utf8')) + 1024
+        assert actual['input'] + estimate <= 50000
+        assert actual['output'] + payload['max_tokens'] <= 7300
+        assert actual['input'] + actual['output'] + estimate + payload['max_tokens'] <= 30000
+        requests.append(payload)
+        if 'profile' in body:
+            assert len(body['candidates']) == 40 and payload['max_tokens'] == 7200
+            rows = []
+            for c in body['candidates']:
+                row = item(c['candidate_id'])
+                del row['reason']
+                rows.append(row)
+            completion = 100 if len(requests) == 1 else second_completion
+            result = {'items': rows}
+        else:
+            assert 'rss_excerpt' not in body['candidates'][0]
+            completion, result = 100, {'events': []}
+        actual['input'] += 100
+        actual['output'] += completion
+        return httpx.Response(200, json={
+            'choices': [{'message': {'content': json.dumps(result)}}],
+            'usage': {'prompt_tokens': 100, 'completion_tokens': completion, 'total_tokens': 100 + completion}})
+
+    report = run([candidate(i) for i in range(1, 81)],
+                 DeepSeekClient('fake', transport=httpx.MockTransport(handler)))
+    assert report['status'] == 'ok' and report['analyzed_count'] == 80
+    assert report['composition_status'] == expected_composition
+    assert report['api_calls'] == (3 if expected_composition == 'ok' else 2)
+    assert report['prompt_tokens'] == actual['input']
+    assert report['completion_tokens'] == actual['output']
+    assert report['total_tokens'] == actual['input'] + actual['output'] <= 30000
+
+
+@pytest.mark.parametrize('invalid_type', ['json', 'schema'])
+def test_invalid_third_batch_reports_upstream_degradation(monkeypatch, invalid_type):
+    monkeypatch.setenv('AI_MAX_BATCH_CANDIDATES', '40')
+    monkeypatch.setenv('AI_MAX_OUTPUT_TOKENS', '30000')
+    monkeypatch.setenv('AI_MAX_TOTAL_TOKENS', '100000')
+    requests = []
+
+    def handler(request):
+        payload = json.loads(request.content)
+        body = json.loads(payload['messages'][1]['content'])
+        assert 'profile' in body  # The composition request must not be sent.
+        requests.append(body)
+        if len(requests) <= 2:
+            rows = []
+            for c in body['candidates']:
+                row = item(c['candidate_id'])
+                del row['reason']
+                rows.append(row)
+            content = json.dumps({'items': rows})
+        elif invalid_type == 'json':
+            content = '   ' if len(requests) == 3 else '{invalid'
+        else:
+            bad_rows = [item(c['candidate_id']) for c in body['candidates']]
+            del bad_rows[0]['global_impact']
+            content = json.dumps({'items': bad_rows})
+        return httpx.Response(200, json={'choices': [{'message': {'content': content}}],
+                                         'usage': {'prompt_tokens': 100, 'completion_tokens': 100, 'total_tokens': 200}})
+
+    report = run([candidate(i) for i in range(1, 121)],
+                 DeepSeekClient('fake', transport=httpx.MockTransport(handler)))
+    assert len(requests) == report['api_calls'] == 4
+    assert report['analyzed_count'] == 80 and report['failed_count'] == 40
+    assert report['status'] == 'degraded' and report['fallback_reason'] == 'invalid_model_output'
+    assert report['composition_status'] == 'fallback_upstream_degraded'

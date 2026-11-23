@@ -95,7 +95,7 @@ def run(candidates, client=None):
         batch = candidates[start:start + batch_size]
         # Never transmit selection state or URLs to the model.
         clean = [{k: c.get(k) for k in ('candidate_id', 'title', 'source', 'language', 'published_at', 'rss_excerpt')} for c in batch]
-        desired_output = max(256, len(batch) * 160)
+        desired_output = max(256, len(batch) * 180)
         max_tokens = min(desired_output, output_cap - reserved_output, total_cap - reserved_input - reserved_output)
         if max_tokens < desired_output:
             report['status'] = 'budget_exhausted'; break
@@ -161,7 +161,9 @@ def run(candidates, client=None):
                                                       'importance','global_impact','score','event_cluster')} for row in to_compose]
         desired = max(256, len(to_compose) * 45)
         remaining = deadline - time.monotonic()
-        if remaining <= 0:
+        if report['status'] == 'degraded':
+            report['composition_status'] = 'fallback_upstream_degraded'
+        elif remaining <= 0:
             report['composition_status'] = 'fallback_timeout'
         elif report['status'] != 'ok' or report['api_calls'] >= max_calls or desired > output_cap - reserved_output:
             report['composition_status'] = 'fallback_budget'

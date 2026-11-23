@@ -37,12 +37,12 @@ def validate_batch(data, ids, personalized=True):
         for field in DIMENSIONS:
             if type(item.get(field)) not in (int, float) or not 0 <= item[field] <= 100:
                 raise ValueError('invalid score')
-        for field, maximum in (('topic',100),('region',100),('news_type',100),('event_cluster',100),('reason',300)):
+        for field, maximum in (('topic',100),('region',100),('news_type',100),('event_cluster',100)):
             if not isinstance(item.get(field), str) or len(item[field]) > maximum:
                 raise ValueError('invalid field')
         if item.get('confidence') not in ('high','medium','low') or item.get('cluster_type') not in ('duplicate','update','different_angle','analysis','none') or item.get('impact_scope') not in ('local','national','regional','global'):
             raise ValueError('invalid enum')
-        row = {k: item[k] for k in ('candidate_id','topic','region','news_type',*DIMENSIONS,'impact_scope','confidence','event_cluster','cluster_type','reason')}
+        row = {k: item[k] for k in ('candidate_id','topic','region','news_type',*DIMENSIONS,'impact_scope','confidence','event_cluster','cluster_type')}
         row['topic'] = category(row['topic'], TOPICS, TOPIC_ALIASES)
         row['region'] = category(row['region'], REGIONS, REGION_ALIASES)
         if not personalized:
