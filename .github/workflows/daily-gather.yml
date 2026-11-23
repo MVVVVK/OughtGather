@@ -185,7 +185,9 @@ jobs:
         uses: actions/upload-artifact@v6
         with:
           name: quality-report
-          path: output/quality-report.json
+          path: |
+            output/quality-report.json
+            output/quality-sources.json
           if-no-files-found: ignore
           retention-days: 7
 

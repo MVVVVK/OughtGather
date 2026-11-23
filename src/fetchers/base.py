@@ -56,6 +56,7 @@ class FetchResult:
     error_count: int = 0
     source_title: Optional[str] = None  # 内容源的显示名称（如 RSS feed 标题）
     quality_report: List[Dict[str, Any]] = field(default_factory=list)
+    source_stats: Dict[str, Any] = field(default_factory=dict)
 
     def add_error(self, error_msg: str):
         """添加错误信息"""

@@ -153,6 +153,9 @@ def _fetch_source_task(
             if candidates is None:
                 logger.warning(f"fetch_list 返回 None，回退单阶段抓取: {source.src}")
                 result = fetcher.fetch_with_retry()
+                report_hook = getattr(type(fetcher), "record_fallback_outcome", None)
+                if callable(report_hook):
+                    report_hook(fetcher, result)
             else:
                 source_key = tracker.make_source_key(source)
                 if fetcher.dedup_enabled and candidates:
@@ -177,6 +180,7 @@ def _fetch_source_task(
                         + (f"，本次限额未抓取 {len(limit_skipped)} 篇" if limit_skipped else "")
                     )
                 else:
+                    new_candidates = candidates
                     limit = fetcher.get_limit()
                     to_fetch = candidates if getattr(fetcher, "fills_candidate_limit", False) is True else candidates[:limit]
                     logger.info(
@@ -184,6 +188,9 @@ def _fetch_source_task(
                         f"{len(to_fetch)}/{len(candidates)} 篇待抓取"
                     )
                 result = fetcher.fetch_items(to_fetch)
+                report_hook = getattr(type(fetcher), "record_candidate_outcomes", None)
+                if callable(report_hook):
+                    report_hook(fetcher, result, candidates, new_candidates)
         else:
             result = fetcher.fetch_with_retry()
 
@@ -253,8 +260,19 @@ def process_results(results: List[FetchResult], tracker: DedupTracker) -> List[F
         processor = ContentProcessor(result.source)
 
         for article in result.articles:
+            quality = article.metadata.get("quality") if isinstance(article.metadata, dict) else None
+            if not isinstance(quality, dict):
+                quality = next((row for row in result.quality_report
+                                if row.get("url") == article.url and row.get("title") == article.title), None)
+            if isinstance(quality, dict):
+                quality["included"] = False
             if dedup_enabled and tracker.is_fetched(article.url, source_key):
                 logger.debug(f"[{prefix}] 跳过已抓取文章: {article.title}")
+                if isinstance(quality, dict):
+                    quality["reason"] = (quality.get("reason", "") + "; historical_dedup").strip("; ")
+                if result.source_stats and not result.source_stats.get("_list_stage_recorded"):
+                    result.source_stats["historical_dedup"] = result.source_stats.get("historical_dedup", 0) + 1
+                    result.source_stats["candidates"] = max(0, result.source_stats.get("candidates", 0) - 1)
                 skipped_dedup += 1
                 continue
 
@@ -269,6 +287,8 @@ def process_results(results: List[FetchResult], tracker: DedupTracker) -> List[F
                 article = orig_article
 
             if not has_valid_content(article):
+                if isinstance(quality, dict):
+                    quality["reason"] = (quality.get("reason", "") + "; content_processing_empty").strip("; ")
                 skipped_empty += 1
                 logger.warning(
                     f"[{prefix}] 跳过无效/空正文（不写入去重）: {article.title}"
@@ -278,6 +298,8 @@ def process_results(results: List[FetchResult], tracker: DedupTracker) -> List[F
             # 仅在启用去重且正文有效时标记去重
             if dedup_enabled:
                 tracker.mark_as_fetched(article.url, source_key)
+            if isinstance(quality, dict):
+                quality["included"] = True
             new_articles.append(article)
 
         # 更新结果
@@ -375,22 +397,13 @@ def main(argv=None):
             if not result.success:
                 error_log.append(f"[{source.type}] {source.src}: {result.error}")
 
-        # Write the report before EPUB generation so it survives delivery failures.
-        import json
-        os.makedirs("output", exist_ok=True)
-        report = []
-        for result in results:
-            report.extend(result.quality_report)
-            if not result.success and not result.quality_report:
-                report.append({"title": "", "source": result.source.title or result.source.src,
-                               "url": "", "language": None, "method": "source",
-                               "text_length": 0, "status": "failed", "reason": result.error or "source_failed"})
-        with open("output/quality-report.json", "w", encoding="utf-8") as report_file:
-            json.dump(report, report_file, ensure_ascii=False, indent=2)
-
         # 3. 处理结果（去重、内容过滤处理）
         log_stage(3, 5, "去重与内容过滤处理")
         processed_results = process_results(results, tracker)
+
+        # Write both reports before EPUB generation or delivery.
+        from src.quality_report import write_quality_reports
+        write_quality_reports(processed_results)
 
         # 4. 检查是否有新内容并生成 EPUB
         log_stage(4, 5, "检查新内容并生成 EPUB")

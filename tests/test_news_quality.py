@@ -57,6 +57,7 @@ def test_rss_content_before_summary_and_metadata_fallback():
 
 def test_media_rejected_and_later_candidate_fills_quota():
     f = fetcher('N', 1)
+    f.source.metadata['text_news_priority'] = 'N'
     items = [entry('Video: latest update'), entry('Audio: news bulletin'), entry('News from Paris')]
     result = f.fetch_items([{'_entry': item} for item in items])
     assert [r['status'] for r in result.quality_report] == ['rejected', 'rejected', 'summary']
