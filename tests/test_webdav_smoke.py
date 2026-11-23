@@ -28,6 +28,7 @@ def test_success_only_touches_owned_isolated_collection():
          patch('src.dedup.tracker.DedupTracker', side_effect=AssertionError('no dedup access')):
         report = run_smoke(ROOT, client, authorized=True)
     assert report['success'] is True and not report['cleanup_errors']
+    assert all(report['capabilities'][name]['verified'] for name in ('move_new', 'move_overwrite', 'put_overwrite'))
     assert fake.files['/dav/DailyWorldBriefing/latest.epub'] == b'valuable'
     assert all(path.rstrip('/') == PARENT or path.startswith('/dav/' + report['directory']) for _, path in fake.calls)
     assert not any(method in ('MKCOL', 'DELETE') and path.rstrip('/') in ('/dav', PARENT) for method, path in fake.calls)
@@ -94,6 +95,8 @@ def test_overwrite_move_unsupported_is_reported():
         result = run_smoke(ROOT, client, authorized=True)
     failure = next(row for row in result['operations'] if not row['ok'])
     assert failure['operation'] == 'MOVE overwrite' and '501' in failure['reason']
+    assert result['capabilities']['move_overwrite']['status'] == 501
+    assert result['capabilities']['move_overwrite']['supported'] is False
     assert not result['cleanup_errors']
 
 
@@ -275,7 +278,7 @@ def test_smoke_failure_cleans_only_created_child_and_reports_statuses():
         report = run_smoke(ROOT, client, authorized=True)
     assert not report['success'] and not report['cleanup_errors']
     assert report['residual_path'] is None
-    assert [row['status'] for row in report['cleanup_actions']] == [204, 204, 204, 204, 404]
+    assert [row['status'] for row in report['cleanup_actions']] == [204, 204, 204, 204, 204, 404]
     assert PARENT in fake.dirs and fake.files['/dav/DailyWorldBriefing/latest.epub'] == b'old'
     assert all(path.startswith('/dav/' + report['directory']) for method, path in fake.calls if method == 'DELETE')
 

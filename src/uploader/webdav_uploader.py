@@ -37,6 +37,8 @@ class WebDavUploader:
                 code = response.status_code
                 if code in allowed:
                     return response
+                if code == 409:
+                    raise DeliveryError('conflict', f'{method} HTTP 409 conflict')
                 if code in (405, 501):
                     raise DeliveryError('unsupported', f'{method} is unsupported (HTTP {code})')
                 if code in (401, 403):
@@ -107,14 +109,32 @@ class WebDavUploader:
         response = self._request('GET', url, allowed=(200, 404))
         return None if response.status_code == 404 else response.content
 
+    def _put_verified(self, target, content):
+        """Direct PUT is used only for a confirmed 409 fallback or restoration."""
+        self._request('PUT', target, content=content)
+        if self._read(target) != content:
+            raise DeliveryError('verification', 'WebDAV PUT destination verification failed')
+
     def _write_verified(self, target, content, overwrite):
-        # Upload and verify a same-directory temporary file before the atomic MOVE.
+        """Stage and verify, then use MOVE; only a confirmed overwrite 409 allows PUT."""
+        existing = self._read(target)
+        if existing is not None and not overwrite:
+            raise DeliveryError('conflict', 'MOVE target already exists')
         temp = target.rsplit('/', 1)[0] + '/.oughtgather-' + uuid.uuid4().hex + '.tmp'
         try:
             self._request('PUT', temp, content=content)
             if self._read(temp) != content:
                 raise DeliveryError('verification', 'WebDAV staging verification failed')
-            self._request('MOVE', temp, headers={'Destination': target, 'Overwrite': 'T' if overwrite else 'F'})
+            replacing = existing is not None
+            response = self._request('MOVE', temp, allowed=(201, 204, 409),
+                                     headers={'Destination': target, 'Overwrite': 'T' if replacing else 'F'})
+            if response.status_code == 409:
+                if not replacing or self._read(target) is None:
+                    raise DeliveryError('conflict', 'MOVE HTTP 409; existing target not confirmed')
+                self._overwrite_fallbacks.append({'operation': 'MOVE overwrite', 'status': 409,
+                                                   'capability': 'overwrite_unsupported'})
+                self.logger.warning('WebDAV MOVE overwrite returned HTTP 409; using verified PUT')
+                self._put_verified(target, content)
         finally:
             try:
                 self._request('DELETE', temp, allowed=(200, 204, 404))
@@ -140,6 +160,8 @@ class WebDavUploader:
     def upload_epub(self, epub_path: str, edition: str = None) -> bool:
         self.last_error, self.last_result = None, {}
         self._cleanup_warning = None
+        self._overwrite_fallbacks = []
+        self._recovery_status = None
         if not self.config or not self.config.enabled:
             self.last_error = 'disabled'
             self.logger.info('WebDAV is not enabled, skip pushing.')
@@ -193,9 +215,12 @@ class WebDavUploader:
                         if previous is not None:
                             try:
                                 if self._read(latest) != previous:
-                                    self._write_verified(latest, previous, overwrite=True)
+                                    self._put_verified(latest, previous)
+                                    self._recovery_status = 'restored'
+                                else:
+                                    self._recovery_status = 'unchanged'
                             except DeliveryError:
-                                pass
+                                self._recovery_status = 'failed'
                         raise
                 cutoff = get_now().date() - timedelta(days=retention - 1)
                 cleanup_error = None
@@ -210,7 +235,7 @@ class WebDavUploader:
                         cleanup_error = exc.category
                         self._cleanup_warning = str(exc)
                         break
-                self.last_result = {'archive': edition, 'sha256': digest, 'latest_updated': update_latest, 'latest_edition': newest, 'cleanup_error': cleanup_error, 'cleanup_warning': self._cleanup_warning}
+                self.last_result = {'archive': edition, 'sha256': digest, 'latest_updated': update_latest, 'latest_edition': newest, 'cleanup_error': cleanup_error, 'cleanup_warning': self._cleanup_warning, 'overwrite_fallbacks': self._overwrite_fallbacks}
                 return True
             finally:
                 if owned:
@@ -224,7 +249,7 @@ class WebDavUploader:
             self.last_error = 'configuration'
         except DeliveryError as exc:
             self.last_error = exc.category
-            self.last_result = {'error_detail': str(exc)}
+            self.last_result = {'error_detail': str(exc), 'overwrite_fallbacks': self._overwrite_fallbacks, 'recovery': self._recovery_status}
         except httpx.HTTPError:
             self.last_error = 'network'
         self.logger.error('WebDAV delivery failed (%s)', self.last_error)

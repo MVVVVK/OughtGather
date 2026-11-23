@@ -42,9 +42,11 @@ def run_smoke(url, client, *, authorized=False):
     folder = 't-' + uuid.uuid4().hex[:12]
     relative_path = 'OughtGatherSmoke/' + folder
     directory = parent + '/' + folder
-    source, moved, target = (directory + '/' + name for name in ('source.bin', 'moved.bin', 'destination.bin'))
+    source, moved, target, put_target = (directory + '/' + name for name in ('move-source.bin', 'move-target.bin', 'destination.bin', 'put-overwrite.bin'))
     result = {'success': False, 'directory': relative_path, 'operations': [],
-              'cleanup_actions': [], 'cleanup_errors': [], 'residual_path': None}
+              'cleanup_actions': [], 'cleanup_errors': [], 'residual_path': None,
+              'capabilities': {name: {'supported': None, 'status': None, 'verified': False}
+                               for name in ('move_new', 'move_overwrite', 'put_overwrite')}}
     created = False
     creation_attempted = False
     completed = False
@@ -55,6 +57,12 @@ def run_smoke(url, client, *, authorized=False):
         except Exception as exc:
             raise SmokeFailure(label, 'request error: ' + type(exc).__name__) from exc
         code = response.status_code
+        capability = {'MOVE new': 'move_new', 'MOVE overwrite': 'move_overwrite',
+                      'PUT overwrite existing': 'put_overwrite'}.get(label)
+        if capability:
+            result['capabilities'][capability]['status'] = code
+            if code in (405, 501):
+                result['capabilities'][capability]['supported'] = False
         if code not in allowed:
             reason = f'HTTP {code}'
             if code == 405:
@@ -97,8 +105,15 @@ def run_smoke(url, client, *, authorized=False):
         created = True
         request('PUT source', 'PUT', source, (200, 201, 204), content=b'oughtgather smoke one')
         expect('GET source', request('GET source', 'GET', source, (200,)).content == b'oughtgather smoke one')
-        request('MOVE new', 'MOVE', source, (201, 204), headers={'Destination': moved, 'Overwrite': 'F'})
+        move = request('MOVE new', 'MOVE', source, (201, 204), headers={'Destination': moved, 'Overwrite': 'F'})
+        result['capabilities']['move_new']['status'] = move.status_code
         expect('GET moved', request('GET moved', 'GET', moved, (200,)).content == b'oughtgather smoke one')
+        source_check = request('GET source after MOVE new', 'GET', source, (200, 404))
+        result['capabilities']['move_new']['source_status'] = source_check.status_code
+        if source_check.status_code != 404:
+            result['capabilities']['move_new']['supported'] = False
+        expect('GET source after MOVE new', source_check.status_code == 404)
+        result['capabilities']['move_new'].update(supported=True, verified=True)
         request('PUT replacement', 'PUT', source, (200, 201, 204), content=b'oughtgather smoke two')
         request('PUT destination', 'PUT', target, (200, 201, 204), content=b'oughtgather old value')
         listing = request('PROPFIND', 'PROPFIND', directory + '/', (207,), headers={'Depth': '1'})
@@ -108,10 +123,31 @@ def run_smoke(url, client, *, authorized=False):
                      for el in listing_root.findall('.//{DAV:}href')}
         except ElementTree.ParseError as exc:
             raise SmokeFailure('PROPFIND', 'invalid XML response') from exc
-        expect('PROPFIND entries', {'source.bin', 'moved.bin', 'destination.bin'} <= names)
-        request('MOVE overwrite', 'MOVE', source, (201, 204), headers={'Destination': target, 'Overwrite': 'T'})
-        expect('GET overwritten', request('GET overwritten', 'GET', target, (200,)).content == b'oughtgather smoke two')
-        request('GET moved source', 'GET', source, (404,))
+        expect('PROPFIND entries', {'move-source.bin', 'move-target.bin', 'destination.bin'} <= names)
+        moved_overwrite = request('MOVE overwrite', 'MOVE', source, (201, 204, 409),
+                                  headers={'Destination': target, 'Overwrite': 'T'})
+        result['capabilities']['move_overwrite']['status'] = moved_overwrite.status_code
+        if moved_overwrite.status_code == 409:
+            result['operations'][-1].update(ok=False, reason='HTTP 409 (overwrite conflict)')
+            result['capabilities']['move_overwrite']['supported'] = False
+        else:
+            expect('GET overwritten', request('GET overwritten', 'GET', target, (200,)).content == b'oughtgather smoke two')
+            request('GET moved source', 'GET', source, (404,))
+            result['capabilities']['move_overwrite'].update(supported=True, verified=True)
+
+        request('PUT overwrite initial', 'PUT', put_target, (200, 201, 204), content=b'put version A')
+        expect('GET PUT initial', request('GET PUT initial', 'GET', put_target, (200,)).content == b'put version A')
+        put = request('PUT overwrite existing', 'PUT', put_target, (200, 201, 204), content=b'put version B')
+        result['capabilities']['put_overwrite']['status'] = put.status_code
+        put_verified = request('GET PUT overwritten', 'GET', put_target, (200,)).content == b'put version B'
+        result['capabilities']['put_overwrite']['supported'] = put_verified
+        expect('GET PUT overwritten', put_verified)
+        result['capabilities']['put_overwrite']['verified'] = True
+        if moved_overwrite.status_code == 409:
+            request('DELETE source after conflict', 'DELETE', source, (200, 204, 404))
+            request('GET deleted source', 'GET', source, (404,))
+        request('DELETE PUT target', 'DELETE', put_target, (200, 204))
+        request('GET deleted PUT target', 'GET', put_target, (404,))
         request('DELETE moved', 'DELETE', moved, (200, 204))
         request('GET deleted moved', 'GET', moved, (404,))
         request('DELETE destination', 'DELETE', target, (200, 204))
@@ -126,7 +162,7 @@ def run_smoke(url, client, *, authorized=False):
     finally:
         if created and not completed:
             # Only names in the collection created with HTTP 201 in this run.
-            for label, address in (('source', source), ('moved', moved), ('destination', target), ('collection', directory)):
+            for label, address in (('source', source), ('moved', moved), ('destination', target), ('put_target', put_target), ('collection', directory)):
                 try:
                     response = client.request('DELETE', address)
                     action = {'item': label, 'status': response.status_code}
