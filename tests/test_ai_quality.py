@@ -92,6 +92,7 @@ def test_composition_failure_or_budget_preserves_article_results(monkeypatch, ca
     report = run([candidate(i) for i in range(1,6)], DeepSeekClient('fake', transport=httpx.MockTransport(handler)))
     assert report['analyzed_count'] == 5 and report['status'] == 'ok'
     assert report['composition_status'] == status and len(seen) == calls_allowed
+    assert report['event_grouping_source'] == 'fallback_hints'
     assert report['api_calls'] == calls_allowed
 
 
@@ -281,3 +282,132 @@ def test_invalid_third_batch_reports_upstream_degradation(monkeypatch, invalid_t
     assert report['analyzed_count'] == 80 and report['failed_count'] == 40
     assert report['status'] == 'degraded' and report['fallback_reason'] == 'invalid_model_output'
     assert report['composition_status'] == 'fallback_upstream_degraded'
+
+
+def test_composition_prompt_requests_only_non_singleton_groups():
+    from src.ai.client import COMPOSE_SYSTEM
+    assert 'TWO OR MORE' in COMPOSE_SYSTEM
+    assert 'do not create singleton events' in COMPOSE_SYSTEM
+    assert 'treated locally as singleton events' in COMPOSE_SYSTEM
+    sample = json.loads(COMPOSE_SYSTEM.split('JSON example: ', 1)[1])
+    assert len(validate_composition(sample, {'id1', 'id2'})) == 2
+
+
+def test_composition_sixty_candidates_three_groups_and_singletons(monkeypatch):
+    monkeypatch.setenv('AI_MAX_BATCH_CANDIDATES', '40')
+    monkeypatch.setenv('AI_MAX_OUTPUT_TOKENS', '12000')
+    monkeypatch.setenv('AI_MAX_TOTAL_TOKENS', '50000')
+    monkeypatch.setenv('AI_MAX_CALLS_PER_RUN', '3')
+    calls, actual = [], {'input': 0, 'output': 0}
+    groups = [range(1, 6), range(6, 10), range(10, 12)]
+    events = [{'event_id': f'e{n}', 'members': [
+        {'candidate_id': str(i), 'relation': 'primary' if pos == 0 else 'analysis' if pos == 1 else 'duplicate'}
+        for pos, i in enumerate(group)]} for n, group in enumerate(groups)]
+    assert len(validate_composition({'events': events}, {str(i) for i in range(1, 61)})) == 11
+
+    def handler(request):
+        payload = json.loads(request.content)
+        body = json.loads(payload['messages'][1]['content'])
+        estimate = len(json.dumps(payload, ensure_ascii=False).encode('utf8')) + 1024
+        assert actual['output'] + payload['max_tokens'] <= 12000
+        assert actual['input'] + actual['output'] + estimate + payload['max_tokens'] <= 50000
+        calls.append(payload)
+        if 'profile' in body:
+            data = {'items': [item(c['candidate_id']) for c in body['candidates']]}
+            completion = 100
+        else:
+            assert len(body['candidates']) == 60 and payload['max_tokens'] == 3600
+            assert all('rss_excerpt' not in row for row in body['candidates'])
+            assert 'do not create singleton events' in payload['messages'][0]['content']
+            data, completion = {'events': events}, 100
+        actual['input'] += 100
+        actual['output'] += completion
+        return httpx.Response(200, json={'choices': [{'message': {'content': json.dumps(data)}}],
+                                         'usage': {'prompt_tokens': 100, 'completion_tokens': completion, 'total_tokens': 100 + completion}})
+
+    candidates = [candidate(i) | {'traditional_selected': True} for i in range(1, 61)]
+    report = run(candidates, DeepSeekClient('fake', transport=httpx.MockTransport(handler)))
+    assert report['status'] == 'ok' and report['composition_status'] == 'ok'
+    assert report['event_grouping_source'] == 'composition' and report['api_calls'] == len(calls) == 3
+    assert report['composition_candidate_count'] == 60 and report['event_count'] == 52
+    assert report['total_tokens'] == actual['input'] + actual['output']
+    selected = set(report['ai_recommended'])
+    assert {str(i) for i in range(12, 61)} <= selected
+    for group in groups:
+        assert len({str(i) for i in group} & selected) <= 2
+    assert {frozenset(x['candidate_id'] for x in members) for members in report['event_clusters'].values()} == {
+        frozenset(str(i) for i in group) for group in groups}
+
+
+def test_singleton_event_is_rejected_and_falls_back(monkeypatch):
+    monkeypatch.setenv('AI_MAX_BATCH_CANDIDATES', '2')
+    singleton = {'events': [{'event_id': 'e1', 'members': [{'candidate_id': '1', 'relation': 'primary'}]}]}
+    with pytest.raises(ValueError):
+        validate_composition(singleton, {'1', '2'})
+    def handler(request):
+        body = json.loads(json.loads(request.content)['messages'][1]['content'])
+        data = {'items': [item(c['candidate_id']) for c in body['candidates']]} if 'profile' in body else singleton
+        return httpx.Response(200, json={'choices': [{'message': {'content': json.dumps(data)}}],
+                                         'usage': {'prompt_tokens': 100, 'completion_tokens': 100, 'total_tokens': 200}})
+    report = run([candidate(1), candidate(2)], DeepSeekClient('fake', transport=httpx.MockTransport(handler)))
+    assert report['status'] == 'ok' and report['composition_status'] == 'fallback_invalid_output'
+    assert report['event_grouping_source'] == 'fallback_hints'
+
+
+@pytest.mark.parametrize('bad_events', [
+    [{'event_id': 'a', 'members': [{'candidate_id': '1', 'relation': 'primary'}, {'candidate_id': '999', 'relation': 'duplicate'}]}],
+    [{'event_id': 'a', 'members': [{'candidate_id': '1', 'relation': 'primary'}, {'candidate_id': '1', 'relation': 'duplicate'}]}],
+    [{'event_id': 'a', 'members': [{'candidate_id': '1', 'relation': 'primary'}, {'candidate_id': '2', 'relation': 'invented'}]}],
+    [{'event_id': 'a', 'members': [{'candidate_id': '1', 'relation': 'primary'}, {'candidate_id': '2', 'relation': 'duplicate'}]},
+     {'event_id': 'a', 'members': [{'candidate_id': '3', 'relation': 'primary'}, {'candidate_id': '4', 'relation': 'duplicate'}]}],
+])
+def test_composition_retains_id_and_relation_guards(bad_events):
+    with pytest.raises(ValueError):
+        validate_composition({'events': bad_events}, {'1', '2', '3', '4'})
+
+
+@pytest.mark.parametrize('limit, expected', [('output', 'fallback_budget'), ('total', 'fallback_budget'),
+                                              ('calls', 'fallback_budget'), ('deadline', 'fallback_timeout')])
+def test_sixty_candidate_composition_respects_budget_and_deadline(monkeypatch, limit, expected):
+    monkeypatch.setenv('AI_MAX_BATCH_CANDIDATES', '40')
+    monkeypatch.setenv('AI_MAX_OUTPUT_TOKENS', '7200' if limit == 'output' else '12000')
+    monkeypatch.setenv('AI_MAX_TOTAL_TOKENS', '10000' if limit == 'total' else '50000')
+    monkeypatch.setenv('AI_MAX_CALLS_PER_RUN', '2' if limit == 'calls' else '3')
+    monkeypatch.setenv('AI_TOTAL_TIMEOUT_SECONDS', '60')
+    clock = {'now': 0}
+    monkeypatch.setattr('src.ai.editor.time.monotonic', lambda: clock['now'])
+
+    class OfflineClient:
+        def __init__(self):
+            self.calls = []
+        def payload(self, batch, profile, max_tokens):
+            return {'kind': 'article', 'ids': [x['candidate_id'] for x in batch], 'max_tokens': max_tokens}
+        def composition_payload(self, candidates, max_tokens):
+            assert len(candidates) == 60 and max_tokens == 3600
+            if limit == 'deadline':
+                clock['now'] = 61  # Time expires while preparing the request.
+            return {'kind': 'composition', 'padding': 'x' * (6000 if limit == 'total' else 0), 'max_tokens': max_tokens}
+        def analyze_batch(self, payload, timeout):
+            assert timeout > 0
+            self.calls.append(payload)
+            assert payload['kind'] == 'article'  # No over-budget composition call.
+            completion = (3000 if len(self.calls) == 1 else 1000) if limit == 'output' else 100
+            return {'items': [item(cid) for cid in payload['ids']]}, {
+                'prompt_tokens': 100, 'completion_tokens': completion, 'total_tokens': 100 + completion}
+
+    client = OfflineClient()
+    report = run([candidate(i) for i in range(1, 61)], client)
+    assert report['status'] == 'ok' and report['analyzed_count'] == 60
+    assert report['composition_status'] == expected and report['event_grouping_source'] == 'fallback_hints'
+    assert report['api_calls'] == len(client.calls) == 2
+    assert report['completion_tokens'] <= (7200 if limit == 'output' else 12000)
+    assert report['total_tokens'] <= (10000 if limit == 'total' else 50000)
+
+
+def test_composition_rejects_cross_event_duplicate_and_long_id():
+    members = lambda a, b: [{'candidate_id': a, 'relation': 'primary'}, {'candidate_id': b, 'relation': 'duplicate'}]
+    with pytest.raises(ValueError):
+        validate_composition({'events': [{'event_id': 'a', 'members': members('1', '2')},
+                                         {'event_id': 'b', 'members': members('2', '3')}]}, {'1', '2', '3'})
+    with pytest.raises(ValueError):
+        validate_composition({'events': [{'event_id': 'x' * 65, 'members': members('1', '2')}]}, {'1', '2'})

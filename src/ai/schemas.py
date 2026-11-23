@@ -61,7 +61,7 @@ def validate_composition(data, ids):
             raise ValueError('invalid event')
         event_ids.add(event['event_id'])
         members = event.get('members')
-        if not isinstance(members, list) or not members:
+        if not isinstance(members, list) or len(members) < 2:
             raise ValueError('invalid members')
         for member in members:
             if not isinstance(member, dict) or member.get('candidate_id') not in ids or member['candidate_id'] in seen or member.get('relation') not in ('primary','duplicate','update','different_angle','analysis'):

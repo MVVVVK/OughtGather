@@ -61,7 +61,8 @@ def run(candidates, client=None):
               'estimated_cost': None, 'pricing_version': os.getenv('AI_PRICING_VERSION', 'unconfigured'),
               'memory_revision': None, 'memory_status': 'not_loaded', 'fallback_reason': None,
               'traditional_selected': [], 'ai_recommended': [], 'agreement': [], 'ai_only': [], 'traditional_only': [],
-              'ranking': [], 'topic_distribution': {}, 'region_distribution': {}, 'language_distribution': {}, 'event_clusters': {}}
+              'ranking': [], 'topic_distribution': {}, 'region_distribution': {}, 'language_distribution': {}, 'event_clusters': {},
+              'event_grouping_source': 'fallback_hints'}
     if mode != 'shadow':
         return report
     key = os.getenv('DEEPSEEK_API_KEY', '')
@@ -159,7 +160,7 @@ def run(candidates, client=None):
     if len(to_compose) >= 2:
         clean_composition = [{k: row.get(k) for k in ('candidate_id','title','source','topic','region','news_type',
                                                       'importance','global_impact','score','event_cluster')} for row in to_compose]
-        desired = max(256, len(to_compose) * 45)
+        desired = max(256, len(to_compose) * 60)
         remaining = deadline - time.monotonic()
         if report['status'] == 'degraded':
             report['composition_status'] = 'fallback_upstream_degraded'
@@ -173,6 +174,8 @@ def run(candidates, client=None):
                 estimate = len(json.dumps(payload, ensure_ascii=False).encode('utf8')) + 1024
                 if (reserved_input + estimate > input_cap or reserved_input + reserved_output + estimate + desired > total_cap):
                     report['composition_status'] = 'fallback_budget'
+                elif (remaining := deadline - time.monotonic()) <= 0:
+                    report['composition_status'] = 'fallback_timeout'
                 else:
                     report['api_calls'] += 1
                     reserved_input += estimate
@@ -190,6 +193,7 @@ def run(candidates, client=None):
                     for row in to_compose:
                         mappings.setdefault(row['candidate_id'], ('singleton:' + row['candidate_id'], 'primary'))
                     report['composition_status'] = 'ok'
+                    report['event_grouping_source'] = 'composition'
             except CompositionBudgetExceeded:
                 report['composition_status'] = 'fallback_budget'
             except ProviderError as exc:
