@@ -1,6 +1,6 @@
 import pytest
 from unittest.mock import MagicMock, patch, call
-from src.main import main, has_valid_content, process_results
+from src.main import main, has_valid_content, process_results, mark_epub_articles
 from src.config import ContentSource
 from src.fetchers.base import Article, FetchResult
 
@@ -130,6 +130,8 @@ class TestProcessResultsValidContent:
         assert len(out) == 1
         assert len(out[0].articles) == 1
         assert out[0].articles[0].title == "有效文章"
+        tracker.mark_as_fetched.assert_not_called()
+        mark_epub_articles(out, tracker)
         tracker.mark_as_fetched.assert_called_once_with(
             valid.url, tracker.make_source_key.return_value
         )
@@ -191,6 +193,8 @@ class TestProcessResultsValidContent:
         out = process_results([result], tracker)
 
         assert len(out[0].articles) == 1
+        tracker.mark_as_fetched.assert_not_called()
+        mark_epub_articles(out, tracker)
         tracker.mark_as_fetched.assert_called_once()
 
     @patch("src.main.ContentProcessor")
@@ -214,6 +218,8 @@ class TestProcessResultsValidContent:
 
         assert len(out[0].articles) == 2
         assert [a.title for a in out[0].articles] == ["好文章", "简短"]
+        tracker.mark_as_fetched.assert_not_called()
+        mark_epub_articles(out, tracker)
         assert tracker.mark_as_fetched.call_count == 2
 
     @patch("src.main.ContentProcessor")
@@ -269,6 +275,8 @@ class TestProcessResultsValidContent:
         out = process_results([result], tracker)
 
         assert len(out[0].articles) == 1
+        tracker.mark_as_fetched.assert_not_called()
+        mark_epub_articles(out, tracker)
         tracker.mark_as_fetched.assert_called_once()
 
     @patch("src.main.ContentProcessor")
@@ -297,6 +305,8 @@ class TestProcessResultsValidContent:
         assert len(out[0].articles) == 1
         # 原文章内容没有被修改为"被污染的内容"
         assert "原始 HTML" in out[0].articles[0].content
+        tracker.mark_as_fetched.assert_not_called()
+        mark_epub_articles(out, tracker)
         tracker.mark_as_fetched.assert_called_once()
 
     @patch("src.main.ContentProcessor")

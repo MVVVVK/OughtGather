@@ -8,11 +8,13 @@ import feedparser
 
 from src.config import ContentSource
 from src.fetchers.base import BaseFetcher, FetchResult, Article
-from src.utils.helpers import format_date
+from src.utils.helpers import format_date, get_now
 from src.fetchers.quality import inspect, MEDIA
 from bs4 import BeautifulSoup
 from urllib.parse import unquote, urlsplit
 import re
+import calendar
+from datetime import datetime, timezone, timedelta
 
 
 class RSSFetcher(BaseFetcher):
@@ -20,6 +22,7 @@ class RSSFetcher(BaseFetcher):
 
     type_name = "rss"
     supports_two_phase = True
+    dedup_strategy = "published"
     fills_candidate_limit = True
     src_placeholder = "RSS/Atom URL, 例如: https://hnrss.org/frontpage"
     config_schema = {
@@ -61,6 +64,8 @@ class RSSFetcher(BaseFetcher):
         try:
             # 通过 BaseFetcher._make_request 下载后再解析，复用统一 UA / 连接池
             feed = self._parse_feed()
+            self._capture_feed_diagnostics(feed)
+            result.source_stats.update(self._feed_diagnostics)
 
             # 检查解析结果
             # 改进：即使有格式错误，只要有条目就继续处理
@@ -96,9 +101,30 @@ class RSSFetcher(BaseFetcher):
 
             # 遍历所有条目
             self._quality_report = []
+            self._suppress_failed_metadata = set()
+            tracker = getattr(self, "_single_phase_tracker", None)
+            source_key = tracker.make_source_key(self.source) if tracker else None
+            candidate_urls = set()
             for entry in entries:
                 try:
-                    if self._should_delete(entry.get("title", "")):
+                    url = entry.get("link", "")
+                    skip = None
+                    if tracker and url:
+                        if tracker.is_fetched(url, source_key):
+                            skip = "historical_dedup"
+                            result.source_stats["historical_dedup"] += 1
+                        else:
+                            skip = tracker.retry_status(url, source_key)
+                            if tracker.retry_count(url, source_key):
+                                self._suppress_failed_metadata.add(url)
+                        if not skip and url in candidate_urls:
+                            skip = "duplicate_candidate"
+                        if not skip:
+                            candidate_urls.add(url)
+                    if skip:
+                        result.source_stats["candidates"] -= 1
+                        self._quality_report.append(self._skipped_report(entry.get("title", ""), url, skip))
+                    elif self._should_delete(entry.get("title", "")):
                         self._quality_report.append(self._skipped_report(entry.get("title", ""), entry.get("link", ""), "title_filter"))
                     elif len(result.articles) >= limit:
                         self._quality_report.append(self._skipped_report(entry.get("title", ""), entry.get("link", ""), "quota_limit"))
@@ -109,6 +135,9 @@ class RSSFetcher(BaseFetcher):
                 except Exception as e:
                     self.logger.error(f"Failed to parse entry: {e}")
                     result.add_error(f"Failed to parse entry: {e}")
+                    self._quality_report.append({"title": entry.get("title", ""), "source": self.source.title or self.source.src,
+                                                 "url": entry.get("link", ""), "language": None, "method": "none", "text_length": 0,
+                                                 "status": "failed", "reason": "entry_parse_failed", "attempted": True, "included": False})
 
             result.quality_report = self._quality_report
             # 只要成功解析了至少一些条目，就认为抓取成功
@@ -137,6 +166,7 @@ class RSSFetcher(BaseFetcher):
         """
         try:
             feed = self._parse_feed()
+            self._capture_feed_diagnostics(feed)
 
             if feed.bozo:
                 self.logger.warning(
@@ -217,7 +247,7 @@ class RSSFetcher(BaseFetcher):
             except Exception as e:
                 self.logger.error(f"[fetch_items] 解析条目失败: {e}")
                 result.add_error(f"Failed to parse entry: {e}")
-                self._quality_report.append({"title": cand.get("title", ""), "source": self.source.title or self.source.src, "url": cand.get("url", ""), "language": None, "method": "none", "text_length": 0, "status": "failed", "reason": "entry_parse_failed"})
+                self._quality_report.append({"title": cand.get("title", ""), "source": self.source.title or self.source.src, "url": cand.get("url", ""), "language": None, "method": "none", "text_length": 0, "status": "failed", "reason": "entry_parse_failed", "attempted": True})
 
         if result.articles:
             result.success = True
@@ -305,10 +335,12 @@ class RSSFetcher(BaseFetcher):
                   "url": link, "language": language or None, "method": method,
                   "text_length": length if status not in ("failed", "rejected") else 0,
                   "status": status, "reason": "; ".join(reasons),
-                  "media_candidate": media, "included": False}
+                  "media_candidate": media, "attempted": True, "included": False}
         if hasattr(self, "_quality_report"):
             self._quality_report.append(report)
-        if status == "rejected":
+        if status == "rejected" or (status == "failed" and link in getattr(self, "_suppress_failed_metadata", set())):
+            if status == "failed":
+                report["reason"] += "; metadata_already_shown"
             return None
         image_html = raw_html if status == "full_text" else content
         body_images = self._extract_images(image_html, base_url=link)
@@ -343,13 +375,16 @@ class RSSFetcher(BaseFetcher):
         excluded = list(getattr(self, "_filtered_reports", []))
         for candidate in candidates:
             if id(candidate) not in new_ids:
-                reason = "historical_dedup" if candidate.get("url") else "missing_url"
+                reason = candidate.get("_skip_reason") or ("historical_dedup" if candidate.get("url") else "missing_url")
                 excluded.append(self._skipped_report(candidate.get("title", ""), candidate.get("url", ""), reason))
         result.quality_report = excluded + result.quality_report
         result.source_stats.update({
             "rss_returned": getattr(self, "_rss_returned", len(candidates)),
             "historical_dedup": sum(row["reason"] == "historical_dedup" for row in excluded),
             "candidates": len(new_candidates),
+            "text_candidates": sum(not c.get("_media", False) for c in new_candidates),
+            "media_candidates": sum(bool(c.get("_media", False)) for c in new_candidates),
+            **getattr(self, "_feed_diagnostics", {}),
             "_list_stage_recorded": True,
         })
 
@@ -357,6 +392,7 @@ class RSSFetcher(BaseFetcher):
         # fetch_with_retry constructs a fresh failure result after retries.
         if not result.source_stats and hasattr(self, "_rss_returned"):
             result.source_stats["rss_returned"] = self._rss_returned
+        result.source_stats.update(getattr(self, "_feed_diagnostics", {}))
 
     def _get_summary(self, entry: dict) -> str:
         """
@@ -380,11 +416,40 @@ class RSSFetcher(BaseFetcher):
 
         return ""
 
+    def _capture_feed_diagnostics(self, feed):
+        def as_date(value):
+            try:
+                return datetime.fromtimestamp(calendar.timegm(value), tz=timezone.utc)
+            except (ValueError, TypeError, OverflowError, IndexError, OSError):
+                return None
+
+        info = getattr(self, "_feed_diagnostics", {})
+        info.setdefault("fetched_at", get_now().isoformat())
+        info["rss_success"] = True
+        info["parse_error"] = str(feed.bozo_exception) if feed.bozo else None
+        published = [as_date(e.get("published_parsed")) for e in feed.entries]
+        published = [d for d in published if d is not None]
+        latest = max(published) if published else None
+        updated = as_date(feed.feed.get("updated_parsed"))
+        info["latest_published"] = latest.isoformat() if latest else None
+        info["feed_updated"] = updated.isoformat() if updated else None
+        info["stale_warning"] = "latest_article_older_than_30_days" if latest and get_now() - latest > timedelta(days=30) else None
+        self._feed_diagnostics = info
+
     def _parse_feed(self):
         """
         通过基类 HTTP 客户端下载 RSS/Atom，再用 feedparser 解析。
 
         不直接把 URL 交给 feedparser，确保网络访问统一使用基类客户端。
         """
-        response = self._make_request(self.source.src)
-        return feedparser.parse(response.content)
+        self._feed_diagnostics = {"fetched_at": get_now().isoformat(), "rss_success": False,
+                                  "http_status": None, "parse_error": None}
+        try:
+            response = self._make_request(self.source.src)
+            status = getattr(response, "status_code", None)
+            self._feed_diagnostics["http_status"] = status if isinstance(status, int) else None
+            return feedparser.parse(response.content)
+        except Exception as exc:
+            status = getattr(getattr(exc, "response", None), "status_code", None)
+            self._feed_diagnostics["http_status"] = status if isinstance(status, int) else None
+            raise

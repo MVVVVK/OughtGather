@@ -152,27 +152,46 @@ def _fetch_source_task(
             candidates = fetcher.fetch_list()
             if candidates is None:
                 logger.warning(f"fetch_list 返回 None，回退单阶段抓取: {source.src}")
+                if getattr(fetcher, "dedup_strategy", None) == "published":
+                    fetcher._single_phase_tracker = tracker
                 result = fetcher.fetch_with_retry()
                 report_hook = getattr(type(fetcher), "record_fallback_outcome", None)
                 if callable(report_hook):
                     report_hook(fetcher, result)
             else:
                 source_key = tracker.make_source_key(source)
-                if fetcher.dedup_enabled and candidates:
+                published_only = getattr(fetcher, "dedup_strategy", None) == "published"
+                if fetcher.dedup_enabled and candidates and not published_only:
                     tracker.stage_source_snapshot(
                         source_key, [c.get("url") for c in candidates]
                     )
                     snapshot_staged = True
 
                 if fetcher.dedup_enabled:
-                    new_candidates = [
-                        c for c in candidates
-                        if c.get("url") and not tracker.is_fetched(c["url"], source_key)
-                    ]
+                    new_candidates = []
+                    candidate_urls = set()
+                    for candidate in candidates:
+                        url = candidate.get("url")
+                        if not url:
+                            candidate["_skip_reason"] = "missing_url"
+                        elif tracker.is_fetched(url, source_key):
+                            candidate["_skip_reason"] = "historical_dedup"
+                        elif published_only and tracker.retry_status(url, source_key):
+                            candidate["_skip_reason"] = tracker.retry_status(url, source_key)
+                        elif published_only and url in candidate_urls:
+                            candidate["_skip_reason"] = "duplicate_candidate"
+                        else:
+                            new_candidates.append(candidate)
+                            candidate_urls.add(url)
+                    if published_only:
+                        fetcher._suppress_failed_metadata = {
+                            c["url"] for c in new_candidates
+                            if tracker.retry_count(c["url"], source_key) > 0
+                        }
                     limit = fetcher.get_limit()
                     to_fetch = new_candidates if getattr(fetcher, "fills_candidate_limit", False) is True else new_candidates[:limit]
-                    limit_skipped = new_candidates[limit:]
-                    skipped_dedup = len(candidates) - len(new_candidates)
+                    limit_skipped = [] if getattr(fetcher, "fills_candidate_limit", False) is True else new_candidates[limit:]
+                    skipped_dedup = sum(c.get("_skip_reason") == "historical_dedup" for c in candidates)
                     logger.info(
                         f"[两阶段] {source.type} | {truncate_url(source.src, 40)}: "
                         f"{len(to_fetch)}/{len(candidates)} 篇待抓取"
@@ -194,7 +213,10 @@ def _fetch_source_task(
         else:
             result = fetcher.fetch_with_retry()
 
-        if fetcher.dedup_enabled and not snapshot_staged and result.success and result.articles:
+        if getattr(fetcher, "dedup_strategy", None) == "published":
+            result.source_stats["commit_on_epub"] = True
+        if (fetcher.dedup_enabled and getattr(fetcher, "dedup_strategy", None) != "published"
+                and not snapshot_staged and result.success and result.articles):
             tracker.stage_source_snapshot(
                 tracker.make_source_key(source), [article.url for article in result.articles]
             )
@@ -239,6 +261,7 @@ def process_results(results: List[FetchResult], tracker: DedupTracker) -> List[F
     """
     logger = get_logger()
     processed_results = []
+    selected_urls = {}
 
     for result in results:
         short_src = truncate_url(result.source.src, 40)
@@ -252,6 +275,7 @@ def process_results(results: List[FetchResult], tracker: DedupTracker) -> List[F
 
         fetcher_cls = get_fetcher_class(result.source.type)
         dedup_enabled = getattr(fetcher_cls, "dedup_enabled", True) if fetcher_cls else True
+        published_only = getattr(fetcher_cls, "dedup_strategy", None) == "published"
 
         original_count = len(result.articles)
         new_articles = []
@@ -266,6 +290,11 @@ def process_results(results: List[FetchResult], tracker: DedupTracker) -> List[F
                                 if row.get("url") == article.url and row.get("title") == article.title), None)
             if isinstance(quality, dict):
                 quality["included"] = False
+            if published_only and article.url and article.url in selected_urls.get(source_key, set()):
+                if isinstance(quality, dict):
+                    quality["reason"] = (quality.get("reason", "") + "; duplicate_in_run").strip("; ")
+                skipped_dedup += 1
+                continue
             if dedup_enabled and tracker.is_fetched(article.url, source_key):
                 logger.debug(f"[{prefix}] 跳过已抓取文章: {article.title}")
                 if isinstance(quality, dict):
@@ -296,11 +325,14 @@ def process_results(results: List[FetchResult], tracker: DedupTracker) -> List[F
                 continue
 
             # 仅在启用去重且正文有效时标记去重
-            if dedup_enabled:
+            if dedup_enabled and not published_only:
                 tracker.mark_as_fetched(article.url, source_key)
             if isinstance(quality, dict):
-                quality["included"] = True
+                quality["eligible"] = True
+                quality["included"] = not published_only
             new_articles.append(article)
+            if published_only and article.url:
+                selected_urls.setdefault(source_key, set()).add(article.url)
 
         # 更新结果
         result.articles = new_articles
@@ -317,6 +349,41 @@ def process_results(results: List[FetchResult], tracker: DedupTracker) -> List[F
         )
 
     return processed_results
+
+
+
+def _published_strategy(result):
+    cls = get_fetcher_class(result.source.type)
+    return bool(cls and getattr(cls, "dedup_strategy", None) == "published")
+
+
+def record_article_failures(results, tracker):
+    """Throttle only attempted failures; quota and policy exclusions stay eligible."""
+    for result in results:
+        if not _published_strategy(result):
+            continue
+        key = tracker.make_source_key(result.source)
+        for row in result.quality_report:
+            if row.get("url") and (row.get("status") == "failed" or "content_processing_empty" in row.get("reason", "")):
+                tracker.record_failure(row["url"], key)
+
+
+def mark_epub_articles(results, tracker):
+    """Commit RSS publication only after the generator successfully returns."""
+    for result in results:
+        if not _published_strategy(result):
+            continue
+        key = tracker.make_source_key(result.source)
+        for article in result.articles:
+            quality = article.metadata.get("quality", {})
+            if quality.get("status") != "failed":
+                tracker.mark_as_fetched(article.url, key)
+                tracker.clear_retry(article.url, key)
+            # The processor deep-copies articles, so update the report row as well.
+            for row in result.quality_report:
+                if row.get("url") == article.url and row.get("title") == article.title and row.get("eligible"):
+                    row["included"] = True
+                    break
 
 
 def has_new_content(results: List[FetchResult]) -> bool:
@@ -338,6 +405,7 @@ def main(argv=None):
     parser.add_argument("--config", help="配置文件路径", default="config.json")
     parser.add_argument("--fresh-start", action="store_true", help="清空去重日志并全量标记当前所有 URL，不进行推送")
     parser.add_argument("--test-mode", action="store_true", help="使用独立临时去重记录，不发送邮件或上传")
+    parser.add_argument("--retry-failed", action="store_true", help="重置失败文章的重试计数，不清除已出版记录")
     args, _ = parser.parse_known_args(argv)
     if args.test_mode and args.fresh_start:
         parser.error("--test-mode cannot be combined with --fresh-start")
@@ -359,6 +427,8 @@ def main(argv=None):
         else:
             tracker = DedupTracker()
         dedup_start_count = tracker.get_stats()["total_fetched"]
+        if args.retry_failed:
+            tracker.reset_retries()
 
         # ------------------------------------------------------------------
         # Fresh Start 工作流处理
@@ -400,6 +470,7 @@ def main(argv=None):
         # 3. 处理结果（去重、内容过滤处理）
         log_stage(3, 5, "去重与内容过滤处理")
         processed_results = process_results(results, tracker)
+        record_article_failures(processed_results, tracker)
 
         # Write both reports before EPUB generation or delivery.
         from src.quality_report import write_quality_reports
@@ -412,6 +483,9 @@ def main(argv=None):
         else:
             epub_generator = EPUBGenerator(config)
             epub_path = epub_generator.generate(processed_results, error_log, start_time=start_time)
+            mark_epub_articles(processed_results, tracker)
+            tracker.save()
+            write_quality_reports(processed_results)
 
             # 5. 发送邮件与 WebDAV 上传
             log_stage(5, 5, "推送分发与保存记录")

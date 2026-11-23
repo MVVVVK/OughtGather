@@ -9,6 +9,10 @@ on:
         description: "Reprocess articles with isolated dedup history and no delivery"
         type: boolean
         default: false
+      retry_failed:
+        description: "Reset failed-article retry counters (published history is retained)"
+        type: boolean
+        default: false
   repository_dispatch:  # 支持 Cloudflare Workers 等外部触发
     types: [Daily_Gather_cf_triggerd]
 
@@ -167,11 +171,14 @@ jobs:
           TESTMAIL_APP_API_KEY: ${{ secrets.TESTMAIL_APP_API_KEY }}
 
         run: |
+          args=()
           if [ "${{ inputs.test_mode }}" = "true" ]; then
-            python -u src/main.py --test-mode
-          else
-            python -u src/main.py
+            args+=(--test-mode)
           fi
+          if [ "${{ inputs.retry_failed }}" = "true" ]; then
+            args+=(--retry-failed)
+          fi
+          python -u src/main.py "${args[@]}"
 
       - name: Save dedup records
         if: ${{ success() && !inputs.test_mode }}

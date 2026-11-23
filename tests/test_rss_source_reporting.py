@@ -9,7 +9,7 @@ from src.config import ContentSource
 from src.dedup.tracker import DedupTracker
 from src.fetchers.base import FetchResult
 from src.fetchers.rss_fetcher import RSSFetcher
-from src.main import _fetch_source_task, process_results
+from src.main import _fetch_source_task, process_results, mark_epub_articles
 from src.quality_report import write_quality_reports
 
 BODY = ('<p>International representatives met on Monday to discuss new proposals and their consequences for communities in the region.</p>'
@@ -79,6 +79,7 @@ def test_accounting_counts_every_source_and_skip_reason(tmp_path):
     with patch.object(RSSFetcher, '_parse_feed', return_value=feed(items)):
         result, _ = _fetch_source_task(source, tracker, 10)
     process_results([result], tracker)
+    mark_epub_articles([result], tracker)
     failed_source = ContentSource(type='rss', src='https://example.net/feed', title='Failed Feed')
     failed = FetchResult(source=failed_source, articles=[], success=False, error='feed unavailable')
     all_seen = FetchResult(source=ContentSource(type='rss', src='https://example.net/seen', title='Seen'), articles=[])
@@ -137,7 +138,7 @@ def test_no_entries_is_distinct_from_feed_failure(tmp_path):
     assert sources[0]['status'] == 'failed' and sources[0]['rss_returned'] == 0
 
 
-def test_normal_run_keeps_existing_snapshot_semantics(tmp_path):
+def test_normal_run_tracks_only_published_articles(tmp_path):
     source = ContentSource(type='rss', src='https://example.org/feed', metadata={'limit': 1})
     items = [entry('First', 'one', content=BODY), entry('Second', 'two', content=BODY)]
     path = tmp_path / 'history'
@@ -145,7 +146,9 @@ def test_normal_run_keeps_existing_snapshot_semantics(tmp_path):
     with patch.object(RSSFetcher, '_parse_feed', return_value=feed(items)):
         result, _ = _fetch_source_task(source, tracker, 5)
     process_results([result], tracker)
+    mark_epub_articles([result], tracker)
     tracker.save()
     reloaded = DedupTracker(str(path))
     key = tracker.make_source_key(source)
-    assert all(reloaded.is_fetched(item['link'], key) for item in items)
+    assert reloaded.is_fetched(items[0]['link'], key)
+    assert not reloaded.is_fetched(items[1]['link'], key)
