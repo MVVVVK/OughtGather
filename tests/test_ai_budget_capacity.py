@@ -23,6 +23,78 @@ def client(handler):
     return DeepSeekClient('fake-secret', transport=httpx.MockTransport(handler))
 
 
+def test_200_realistic_multilingual_excerpts_survive_three_stage_planning():
+    candidates = samples(200)
+    for i, row in enumerate(candidates):
+        row['title'] = (f'International leaders discuss economic and security implications of policy decision {i}'
+                        if i % 2 else f'国际新闻观察：各国领导人讨论地区安全与经济政策的最新进展和后续影响 {i}')
+        row['source'] = f'Independent International News Desk {i % 13}'
+        row['rss_excerpt'] = (('Officials described the latest decision and its likely impact on international trade, '
+                               'security and regional cooperation. Further negotiations are expected this week. ') * 3
+                              if i % 2 else ('有关方面介绍了最新决定及其对国际贸易、地区安全和经济合作可能产生的影响。'
+                                             '各方预计将在本周继续进行谈判，并公布更多细节。') * 4)
+    requests = []
+    def handler(request):
+        payload = json.loads(request.content)
+        data = json.loads(payload['input'])
+        stage = payload['text']['format']['name']
+        rows = data['candidates'] if stage == 'topic_grouping' else [c for g in data['groups'] for c in g['candidates']]
+        requests.append((stage, rows))
+        if stage == 'topic_grouping':
+            assert len(rows) == 200
+            groups, n = [], 1
+            for size in [4] * 11 + [3] * 6:
+                groups.append({'members': [f'c{i:03d}' for i in range(n, n + size)]})
+                n += size
+            result, usage = {'groups': groups}, (22000, 400)
+        elif stage == 'topic_audit':
+            assert len(data['groups']) == 17 and len(rows) == 62
+            result, usage = {'splits': []}, (5000, 250)
+        else:
+            assert len(data['groups']) == 155 and len(rows) == 200
+            result, usage = {'selections': []}, (20000, 300)
+        return httpx.Response(200, json=response(result, *usage))
+    report = run(candidates, client(handler))
+    assert report['status'] == 'ok' and [stage for stage, _ in requests] == ['topic_grouping', 'topic_audit', 'topic_selection']
+    assert report['api_calls'] == 3 and report['budget_limit_hit'] is None
+    assert (report['prompt_tokens'], report['completion_tokens'], report['total_tokens']) == (47000, 950, 47950)
+    for stage, rows in requests:
+        stats = report['excerpt_retention'][stage]
+        assert stats['received_nonempty'] == len(rows)
+        assert len(stats['attempts']) == 1
+        assert stats['attempts'][0]['sent_nonempty'] == sum(bool(row['rss_excerpt'].strip()) for row in rows)
+        assert stats['attempts'][0]['average_retained_chars'] == round(sum(len(row['rss_excerpt']) for row in rows) / len(rows), 2)
+    group_stats = report['excerpt_retention']['topic_grouping']['attempts'][0]
+    assert group_stats['sent_nonempty'] == 200
+    assert group_stats['average_retained_chars'] >= 100 and group_stats['retention_rate'] >= 0.4
+    assert '有关方面介绍了最新决定' not in json.dumps(report, ensure_ascii=False)
+
+
+def test_excerpt_counts_handle_empty_and_failed_attempts():
+    candidates = samples(3)
+    candidates[0]['rss_excerpt'] = 'long enough excerpt'
+    candidates[1]['rss_excerpt'] = ''
+    candidates[2]['rss_excerpt'] = '  '
+    calls = []
+    def handler(request):
+        payload = json.loads(request.content)
+        name = payload['text']['format']['name']
+        calls.append(name)
+        if name == 'topic_grouping':
+            result = {'groups': [{'members': ['c001']}]} if calls.count(name) == 1 else {'groups': []}
+        else:
+            result = {'selections': []}
+        return httpx.Response(200, json=response(result, 100, 100))
+    report = run(candidates, client(handler))
+    assert report['status'] == 'ok'
+    stats = report['excerpt_retention']['topic_grouping']
+    assert stats['received_nonempty'] == 1 and len(stats['attempts']) == 2
+    assert all(attempt['sent_nonempty'] == 1 for attempt in stats['attempts'])
+    assert report['excerpt_retention']['topic_audit'] == {'received_nonempty': 0, 'attempts': []}
+    assert report['excerpt_retention']['topic_selection']['received_nonempty'] == 1
+    assert 'long enough excerpt' not in json.dumps(report)
+
+
 def test_200_invalid_first_response_retries_and_reserves_selection():
     candidates = samples(200)
     for row in candidates:

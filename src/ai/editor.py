@@ -65,13 +65,9 @@ class Budget:
                 self.report['retry_blocked_reason'] = 'actual_usage_limit'
                 raise StageFailure('budget_exhausted')
 
-    def selection_reserve(self, group_minimum, group_output, selection_minimum, selection_output):
-        """Reserve the full singleton selection if feasible, otherwise a safe share.
-
-        The minimum grouping request is never excluded solely by future headroom;
-        actual provider usage can refund the difference before selection.
-        """
-        group_size = self.estimate(group_minimum)
+    def selection_reserve(self, preferred_request, group_output, selection_minimum, selection_output):
+        """Reserve future headroom without sacrificing the preferred current evidence."""
+        group_size = self.estimate(preferred_request)
         free_input = max(0, self.max_input - self.reserved_input - group_size)
         free_output = max(0, self.max_output - self.reserved_output - group_output)
         free_total = max(0, self.max_total - self.reserved_input - self.reserved_output - group_size - group_output)
@@ -79,7 +75,11 @@ class Budget:
         protect_input = min(selection_minimum, free_input, max(0, free_total - protect_output))
         return protect_input, protect_output
 
-    def request(self, client, build, output, validate, stage, future=None):
+    def request(self, client, build, output, validate, stage, excerpt_rows, future=None):
+        stats = self.report['excerpt_retention'][stage]
+        original = [(row.get('rss_excerpt') or '') for row in excerpt_rows]
+        stats['received_nonempty'] = sum(bool(value.strip()) for value in original)
+        original_chars = sum(len(value) for value in original)
         previous_limit = 600
         for attempt in range(2):
             remaining = self.deadline - time.monotonic()
@@ -94,15 +94,18 @@ class Budget:
                 raise StageFailure('budget_exhausted')
             minimum = build(0)
             reserve_input = reserve_output = 0
+            max_excerpt = previous_limit if attempt == 0 else previous_limit // 2
             if future:
-                reserve_input, reserve_output = self.selection_reserve(minimum, output, *future)
+                # Preserve up to 160 characters per excerpt before protecting
+                # uncertain later requests; if even that cannot fit, use less.
+                preferred = build(min(160, max_excerpt))
+                reserve_input, reserve_output = self.selection_reserve(preferred, output, *future)
                 # Protect one minimum-size retry only when all reservations fit.
                 minimum_size = self.estimate(minimum)
                 if (attempt == 0 and self.max_calls - self.report['api_calls'] >= 3 and
-                        self.fits(minimum, output, reserve_input + minimum_size, reserve_output + output)):
+                        self.fits(preferred, output, reserve_input + minimum_size, reserve_output + output)):
                     reserve_input += minimum_size
                     reserve_output += output
-            max_excerpt = previous_limit if attempt == 0 else previous_limit // 2
             try:
                 payload, previous_limit = fit_payload(build, self, output, reserve_input, reserve_output, max_excerpt)
             except StageFailure:
@@ -121,6 +124,11 @@ class Budget:
                 self.report['retry_attempted'] = True
             self.report['api_calls'] += 1
             self.report['stage_api_calls'][stage] += 1
+            sent = [value[:previous_limit] for value in original]
+            sent_chars = sum(len(value) for value in sent)
+            stats['attempts'].append({'sent_nonempty': sum(bool(value.strip()) for value in sent),
+                                      'average_retained_chars': round(sent_chars / len(sent), 2) if sent else 0,
+                                      'retention_rate': round(sent_chars / original_chars, 4) if original_chars else None})
             self.reserved_input += estimate
             self.reserved_output += output
             try:
@@ -208,6 +216,8 @@ def run(candidates, client=None):
               'topic_count': 0, 'multi_article_topic_count': 0, 'topic_grouping_status': 'not_started',
               'topic_audit_status': 'not_started', 'audited_group_count': 0, 'split_group_count': 0,
               'topic_count_after_audit': 0, 'topic_selection_status': 'not_started', 'selected_topic_count': 0, 'selected_article_count': 0,
+              'excerpt_retention': {stage: {'received_nonempty': 0, 'attempts': []} for stage in ('topic_grouping', 'topic_audit', 'topic_selection')},
+              'audit_splits': [],
               'max_articles_per_topic': 0, 'duplicate_candidates_grouped': 0, 'ai_recommended': [],
               'topic_groups': [], 'traditional_selected': [], 'agreement': [], 'ai_only': [], 'traditional_only': [],
               'failed_stage': None, 'last_attempt_error_category': None, 'last_response_status': 'not_received',
@@ -242,20 +252,10 @@ def run(candidates, client=None):
         def grouping_input(limit):
             return [{**row, 'rss_excerpt': (row.get('rss_excerpt') or '')[:limit]} for row in short_candidates]
         group_build = lambda n: client.grouping_payload(grouping_input(n), group_output)
-        # A singleton group for each candidate is a conservative upper bound on
-        # the fixed (zero-excerpt) selection structure before grouping is known.
-        minimum_selection = [{'group_id': f'g{i:03d}', 'candidates': [{**row, 'rss_excerpt': ''}]}
-                             for i, row in enumerate(short_candidates, 1)]
-        selection_minimum = budget.estimate(client.selection_payload(minimum_selection, provider_safe(profile), 800))
-        # Before grouping, conservatively estimate a global audit with pairs of
-        # candidates. Excerpts are expendable; candidate IDs are never dropped.
-        forecast = [{'group_id': f'a{i//2+1:03d}', 'candidates': [
-            {**row, 'rss_excerpt': ''} for row in short_candidates[i:i+2]]}
-                    for i in range(0, len(short_candidates)-1, 2)]
-        forecast_output = max(256, len(short_candidates) * 20) if forecast else 0
-        audit_minimum = budget.estimate(client.audit_payload(forecast, forecast_output)) if forecast else 0
+        # Reserve a bounded share, not a fictional worst-case audit and selection.
+        # Later stages are planned from the groups that actually materialize.
         groups = budget.request(client, group_build, group_output, lambda data: validate_groups(data, short_to_real),
-                                'topic_grouping', future=(selection_minimum + audit_minimum, 800 + forecast_output))
+                                'topic_grouping', short_candidates, future=(budget.max_input // 5, 800))
         report['topic_grouping_status'] = 'ok'
         report['topic_count'] = len(groups)
         stage = 'topic_audit'
@@ -271,11 +271,24 @@ def run(candidates, client=None):
                                         for c in group['members']]}
                         for group_id, group in audit_groups.items()]
             audit_build = lambda n: client.audit_payload(audit_input(n), audit_output)
+            selection_preview = [{'group_id': f'g{i:03d}', 'candidates': [
+                {**by_short[real_to_short[c]], 'rss_excerpt': ''} for c in group['members']]}
+                                 for i, group in enumerate(groups, 1)]
+            selection_minimum = budget.estimate(client.selection_payload(selection_preview, provider_safe(profile), 800))
+            audit_rows = [by_short[real_to_short[c]] for group in multi_groups for c in group['members']]
             groups, split_count = budget.request(
                 client, audit_build, audit_output,
                 lambda data: validate_audit(data, audit_groups, short_to_real, groups),
-                'topic_audit', future=(selection_minimum, 800))
+                'topic_audit', audit_rows, future=(selection_minimum, 800))
             report.update(topic_audit_status='ok', split_group_count=split_count)
+            for original in multi_groups:
+                original_members = set(original['members'])
+                parts = [group for group in groups if set(group['members']) <= original_members]
+                if len(parts) > 1:
+                    report['audit_splits'].append({'original_group_id': original['group_id'],
+                        'partitions': [{'group_id': part['group_id'], 'members': [
+                            {'candidate_id': real, 'title': by_short[real_to_short[real]]['title']}
+                            for real in part['members']]} for part in parts]})
         else:
             report['topic_audit_status'] = 'not_needed'
         report['topic_count_after_audit'] = len(groups)
@@ -302,7 +315,7 @@ def run(candidates, client=None):
                                     for c in g['members']]} for g in groups]
         select_build = lambda n: client.selection_payload(selection_input(n), provider_safe(profile), select_output)
         selected = budget.request(client, select_build, select_output, lambda data: validate_selection(data, provider_members),
-                                  'topic_selection')
+                                  'topic_selection', short_candidates)
         selected_real = [(group_short_to_real[group], short_to_real[cid]) for group, cid in selected]
         report['topic_selection_status'] = 'ok'
         report['ai_recommended'] = [cid for _, cid in selected_real]

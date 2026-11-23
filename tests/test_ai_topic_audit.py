@@ -87,6 +87,12 @@ def test_global_audit_applies_mocked_splits_and_preserves_true_groups():
     assert calls == ['topic_grouping', 'topic_audit', 'topic_selection'] * 2
     assert report['status'] == 'ok' and report['topic_audit_status'] == 'ok'
     assert (report['audited_group_count'], report['split_group_count'], report['topic_count_after_audit']) == (7, 5, 13)
+    assert len(report['audit_splits']) == 5
+    for split in report['audit_splits']:
+        assert len(split['partitions']) == 2
+        members = [member for part in split['partitions'] for member in part['members']]
+        assert len(members) == 2
+        assert all(member['title'] == next(c['title'] for c in source if c['candidate_id'] == member['candidate_id']) for member in members)
     by_id = {m['candidate_id']: g for g in report['topic_groups'] for m in g['members']}
     for i in range(0, 10, 2):
         assert by_id[source[i]['candidate_id']]['group_id'] != by_id[source[i+1]['candidate_id']]['group_id']
@@ -176,6 +182,7 @@ def test_audit_retry_success_still_reaches_selection():
     assert calls == ['topic_grouping', 'topic_audit', 'topic_audit', 'topic_selection']
     assert report['status'] == 'ok' and report['retry_attempted']
     assert report['stage_api_calls']['topic_audit'] == 2
+    assert len(report['excerpt_retention']['topic_audit']['attempts']) == 2
 
 
 @pytest.mark.parametrize('kind', ['invalid', 'provider', 'budget'])
@@ -196,6 +203,7 @@ def test_audit_failure_never_recommends_or_reaches_selection(monkeypatch, kind):
     report = run(candidates(), DeepSeekClient('fake', transport=httpx.MockTransport(handler)))
     assert report['status'] == 'degraded' and report['failed_stage'] == 'topic_audit'
     assert report['topic_audit_status'] == 'failed' and report['topic_selection_status'] == 'not_started'
+    assert report['audit_splits'] == [] and report['excerpt_retention']['topic_selection']['attempts'] == []
     assert not report['ai_recommended'] and 'topic_selection' not in calls
     assert 'private provider error' not in json.dumps(report)
     if kind == 'invalid':
