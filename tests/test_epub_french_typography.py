@@ -3,7 +3,7 @@ import unicodedata
 from zipfile import ZIP_STORED, ZipFile
 from xml.etree import ElementTree as ET
 
-from scripts.epub_font_specimens import CHINESE, ENGLISH, FRENCH_1, FRENCH_2, PUNCTUATION, build
+from scripts.epub_font_specimens import CHINESE, ENGLISH, FRENCH_1, FRENCH_2, PUNCTUATION, build, results
 from src.epub.typography import article_language, language_tag
 from src.fetchers.base import Article
 
@@ -70,3 +70,20 @@ def test_epub_font_opt_in_and_text_parity(tmp_path, monkeypatch):
         manifest = {item.get("href") for item in opf.findall(".//{*}item[@media-type='font/ttf']")}
         assert refs == manifest and len(refs) == 4
         assert all(f"EPUB/{href}" in candidate.namelist() for href in refs)
+
+
+def test_unknown_article_does_not_inherit_interface_language(tmp_path, monkeypatch):
+    specimen = results()
+    specimen[0].source.metadata.clear()
+    specimen[0].articles[0].metadata["language"] = "auto"
+    monkeypatch.setattr("scripts.epub_font_specimens.results", lambda: specimen)
+    monkeypatch.setenv("EPUB_LANGUAGE", "en-US")
+
+    with ZipFile(build(tmp_path / "unknown.epub")) as book:
+        chapter = ET.fromstring(book.read("EPUB/chapter_0.xhtml"))
+        assert chapter.get("lang") == chapter.get("{http://www.w3.org/XML/1998/namespace}lang") == "und"
+        assert chapter.find(".//{*}h1").text == "Économie, cœur et œuvre"
+        assert chapter.find(".//{*}p[@class='toc-link']").get("lang") == "en-US"
+        for page in ("nav", "overview", "divider_0"):
+            root = ET.fromstring(book.read(f"EPUB/{page}.xhtml"))
+            assert root.find('.//{*}a[@href="chapter_0.xhtml"]').get("lang") == "und"

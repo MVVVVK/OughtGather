@@ -281,7 +281,7 @@ class EPUBGenerator:
                 articles_info.append({
                     "title": article.title,
                     "file_name": f"chapter_{curr_chapter_id}.xhtml",
-                    "language": language,
+                    "language": language or "und",
                 })
                 curr_chapter_id += 1
 
@@ -317,7 +317,7 @@ class EPUBGenerator:
                 chapter = epub.EpubHtml(
                     title=article.title,
                     file_name=f"chapter_{chapter_id}.xhtml",
-                    lang=language,
+                    lang=language or "und",
                 )
                 chapter.add_link(href="style/default.css", rel="stylesheet")
                 chapter.content = chapter_content
@@ -458,11 +458,11 @@ class EPUBGenerator:
         # EPUB 3.0 使用 HTML5 DOCTYPE
         toc_link = generate_toc_link(
             f"toc_chapter_{chapter_id}", self.translator,
-            language=self.translator.locale if language else None,
+            language=self.translator.locale,
         )
         article_attrs = language_attributes(language)
-        ui_attrs = language_attributes(self.translator.locale) if language else ""
-        document_attrs = language_attributes(language or self.translator.locale)
+        ui_attrs = language_attributes(self.translator.locale)
+        document_attrs = language_attributes(language or "und")
         content_html = f"""<!DOCTYPE html>
 <html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops" epub:prefix="z3998: http://www.daisy.org/z3998/2012/vocab/structure/#"{document_attrs}>
 <head>

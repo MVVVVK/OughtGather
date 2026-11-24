@@ -24,7 +24,7 @@ B 增加 401,130 B（约 392 KiB）。两书使用完全相同的合成内容、
 
 仅在本地合成测试或明确的验证环境设置 `EPUB_FRENCH_FONT_DIR`。目录需提供可再分发的静态 `regular.ttf`、`bold.ttf`、`italic.ttf`、`bold-italic.ttf` 和含版权声明及完整许可的 UTF-8 `OFL.txt`。读取失败会直接中止生成。清除此变量并重新生成即可移除内嵌字体和 CSS 声明。语言标记与原有 CSS 的链接修复独立生效，正文及分隔页可能开始显示原有样式中的间距和标题规则。
 
-文章语言依次来自 `Article.metadata.language`、已有的 `Article.metadata.quality.language`、明确配置的来源 `metadata.epub_language`。只给已知单语来源配置来源级兜底。无可信声明时沿用界面语言，也不会据此启用候选字体。文章法语和英语分别输出 `fr` 与 `en`，其他支持的语言保留脚本和地区子标签。OPF 保留主界面语言，并追加已知文章语言。正文保留输入的 NFC、NFD、标点和空格，没有在生成阶段做 Unicode 转写。
+文章语言依次来自 `Article.metadata.language`、已有的 `Article.metadata.quality.language`、明确配置的来源 `metadata.epub_language`。只给已知单语来源配置来源级兜底。无可信声明的文章及其目录项标为 `und`（语言未定），界面文字保留界面语言。候选字体只对明确标记的法语生效。文章法语和英语分别输出 `fr` 与 `en`，其他支持的语言保留脚本和地区子标签。OPF 保留主界面语言，并追加已知文章语言。正文保留输入的 NFC、NFD、标点和空格，没有在生成阶段做 Unicode 转写。
 
 从仓库根目录用生产生成器重建样书：
 
