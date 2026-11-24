@@ -1,0 +1,297 @@
+{
+  "public_snapshot": "2026-11-23T19:01:42.681652+00:00",
+  "public_source_count": 49,
+  "public_source_success": 41,
+  "public_comparisons": [
+    {
+      "main": "Le Monde — Une",
+      "branch": "Le Monde — International",
+      "main_recent_7d": 16,
+      "branch_recent_7d": 20,
+      "exact_either": 6,
+      "branch_unmatched_unverified": 14
+    },
+    {
+      "main": "Le Monde — Une",
+      "branch": "Le Monde — Justice",
+      "main_recent_7d": 16,
+      "branch_recent_7d": 20,
+      "exact_either": 1,
+      "branch_unmatched_unverified": 19
+    },
+    {
+      "main": "Le Monde — Une",
+      "branch": "Le Monde — Économie",
+      "main_recent_7d": 16,
+      "branch_recent_7d": 20,
+      "exact_either": 5,
+      "branch_unmatched_unverified": 15
+    },
+    {
+      "main": "Le Monde — Une",
+      "branch": "Le Monde — Les Décodeurs",
+      "main_recent_7d": 16,
+      "branch_recent_7d": 18,
+      "exact_either": 0,
+      "branch_unmatched_unverified": 18
+    },
+    {
+      "main": "Le Monde — International",
+      "branch": "Le Monde — Justice",
+      "main_recent_7d": 20,
+      "branch_recent_7d": 20,
+      "exact_either": 0,
+      "branch_unmatched_unverified": 20
+    },
+    {
+      "main": "Le Monde — International",
+      "branch": "Le Monde — Économie",
+      "main_recent_7d": 20,
+      "branch_recent_7d": 20,
+      "exact_either": 3,
+      "branch_unmatched_unverified": 17
+    },
+    {
+      "main": "The Guardian World",
+      "branch": "The Guardian Business",
+      "main_recent_7d": 45,
+      "branch_recent_7d": 40,
+      "exact_either": 2,
+      "branch_unmatched_unverified": 38
+    },
+    {
+      "main": "The Guardian World",
+      "branch": "The Guardian Technology",
+      "main_recent_7d": 45,
+      "branch_recent_7d": 24,
+      "exact_either": 2,
+      "branch_unmatched_unverified": 22
+    },
+    {
+      "main": "The Guardian World",
+      "branch": "The Guardian Science",
+      "main_recent_7d": 45,
+      "branch_recent_7d": 22,
+      "exact_either": 0,
+      "branch_unmatched_unverified": 22
+    },
+    {
+      "main": "The Guardian World",
+      "branch": "The Guardian — International Development",
+      "main_recent_7d": 45,
+      "branch_recent_7d": 12,
+      "exact_either": 3,
+      "branch_unmatched_unverified": 9
+    },
+    {
+      "main": "France 24 English",
+      "branch": "France 24 — Africa (EN)",
+      "main_recent_7d": 24,
+      "branch_recent_7d": 14,
+      "exact_either": 1,
+      "branch_unmatched_unverified": 13
+    },
+    {
+      "main": "France 24 Français",
+      "branch": "France 24 — Moyen-Orient",
+      "main_recent_7d": 24,
+      "branch_recent_7d": 15,
+      "exact_either": 1,
+      "branch_unmatched_unverified": 14
+    },
+    {
+      "main": "France 24 English",
+      "branch": "France 24 Français",
+      "main_recent_7d": 24,
+      "branch_recent_7d": 24,
+      "exact_either": 0,
+      "branch_unmatched_unverified": 24
+    },
+    {
+      "main": "RFI Français",
+      "branch": "RFI — Afrique",
+      "main_recent_7d": 23,
+      "branch_recent_7d": 24,
+      "exact_either": 5,
+      "branch_unmatched_unverified": 19
+    },
+    {
+      "main": "BBC World",
+      "branch": "BBC News — Africa",
+      "main_recent_7d": 32,
+      "branch_recent_7d": 17,
+      "exact_either": 7,
+      "branch_unmatched_unverified": 10
+    }
+  ],
+  "production": {
+    "run_id": "45298550652",
+    "source_id_scope": "anonymous per-run F01-F08; mapping omitted",
+    "sources": [
+      {
+        "source_id": "F01",
+        "rss_returned": 20,
+        "historical_dedup": 16,
+        "candidates": 4,
+        "text_candidates": 4,
+        "media_candidates": 0,
+        "attempted": 2,
+        "quality_passed": 2,
+        "quota_limited": 2,
+        "full_text_obtained": 0,
+        "rss_content_obtained": 0,
+        "summary_obtained": 2,
+        "failed": 0,
+        "selected": 2
+      },
+      {
+        "source_id": "F02",
+        "rss_returned": 10,
+        "historical_dedup": 10,
+        "candidates": 0,
+        "text_candidates": 0,
+        "media_candidates": 0,
+        "attempted": 0,
+        "quality_passed": 0,
+        "quota_limited": 0,
+        "full_text_obtained": 0,
+        "rss_content_obtained": 0,
+        "summary_obtained": 0,
+        "failed": 0,
+        "selected": 0
+      },
+      {
+        "source_id": "F03",
+        "rss_returned": 60,
+        "historical_dedup": 52,
+        "candidates": 8,
+        "text_candidates": 7,
+        "media_candidates": 1,
+        "attempted": 2,
+        "quality_passed": 2,
+        "quota_limited": 6,
+        "full_text_obtained": 0,
+        "rss_content_obtained": 0,
+        "summary_obtained": 2,
+        "failed": 0,
+        "selected": 2
+      },
+      {
+        "source_id": "F04",
+        "rss_returned": 45,
+        "historical_dedup": 18,
+        "candidates": 27,
+        "text_candidates": 21,
+        "media_candidates": 6,
+        "attempted": 2,
+        "quality_passed": 2,
+        "quota_limited": 25,
+        "full_text_obtained": 2,
+        "rss_content_obtained": 0,
+        "summary_obtained": 0,
+        "failed": 0,
+        "selected": 2
+      },
+      {
+        "source_id": "F05",
+        "rss_returned": 24,
+        "historical_dedup": 0,
+        "candidates": 24,
+        "text_candidates": 16,
+        "media_candidates": 8,
+        "attempted": 2,
+        "quality_passed": 2,
+        "quota_limited": 22,
+        "full_text_obtained": 2,
+        "rss_content_obtained": 0,
+        "summary_obtained": 0,
+        "failed": 0,
+        "selected": 2
+      },
+      {
+        "source_id": "F06",
+        "rss_returned": 34,
+        "historical_dedup": 18,
+        "candidates": 16,
+        "text_candidates": 14,
+        "media_candidates": 2,
+        "attempted": 2,
+        "quality_passed": 2,
+        "quota_limited": 14,
+        "full_text_obtained": 2,
+        "rss_content_obtained": 0,
+        "summary_obtained": 0,
+        "failed": 0,
+        "selected": 2
+      },
+      {
+        "source_id": "F07",
+        "rss_returned": 30,
+        "historical_dedup": 22,
+        "candidates": 8,
+        "text_candidates": 7,
+        "media_candidates": 1,
+        "attempted": 2,
+        "quality_passed": 2,
+        "quota_limited": 6,
+        "full_text_obtained": 2,
+        "rss_content_obtained": 0,
+        "summary_obtained": 0,
+        "failed": 0,
+        "selected": 2
+      },
+      {
+        "source_id": "F08",
+        "rss_returned": 24,
+        "historical_dedup": 7,
+        "candidates": 17,
+        "text_candidates": 13,
+        "media_candidates": 4,
+        "attempted": 2,
+        "quality_passed": 2,
+        "quota_limited": 15,
+        "full_text_obtained": 2,
+        "rss_content_obtained": 0,
+        "summary_obtained": 0,
+        "failed": 0,
+        "selected": 2
+      }
+    ],
+    "totals": {
+      "rss_returned": 247,
+      "historical_dedup": 143,
+      "candidates": 104,
+      "text_candidates": 82,
+      "media_candidates": 22,
+      "attempted": 14,
+      "quality_passed": 14,
+      "quota_limited": 90,
+      "full_text_obtained": 10,
+      "rss_content_obtained": 0,
+      "summary_obtained": 4,
+      "failed": 0,
+      "selected": 14
+    },
+    "ai": {
+      "mode": "shadow",
+      "status": "ok",
+      "candidate_count": 104,
+      "candidate_cap": 200,
+      "skipped_candidate_cap": 0,
+      "topic_count_after_audit": 73,
+      "ai_recommended_count": 16,
+      "traditional_selected_count": 14,
+      "agreement_count": 3,
+      "api_calls": 3
+    },
+    "candidate_count_matches_source_totals": true
+  },
+  "caveats": [
+    "Single public snapshot only; unmatched URLs/titles do not prove distinct events.",
+    "Cross-language and different-title semantic matches unverified.",
+    "Production source identifiers are anonymous run-local ordinals, not stable cross-run identities.",
+    "Quota-limited candidates are unattempted; not confirmed content-quality failures.",
+    "No AI 200-candidate cap truncation occurred in run #31.",
+    "No private CONFIG_JSON, URL, title, article body, hash, memory, credential or personal subscription exported."
+  ]
+}
