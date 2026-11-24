@@ -54,7 +54,7 @@ jobs:
     permissions:
       contents: read
     env:
-      HF_HOME: ${{ runner.temp }}/b3-hf
+      HF_HOME: /tmp/b3-hf-${{ github.run_id }}-${{ github.run_attempt }}
       HF_HUB_DISABLE_IMPLICIT_TOKEN: '1'
       HF_HUB_DISABLE_TELEMETRY: '1'
       HF_ENDPOINT: https://huggingface.co
