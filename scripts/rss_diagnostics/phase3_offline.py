@@ -85,10 +85,14 @@ def summarize_production(source_rows, ai_report, run_id):
     for index, raw in enumerate(source_rows, start=1):
         row = {"source_id": f"F{index:02d}"}
         for field in FIELDS:
-            row[field] = int(raw.get(field) or 0)
+            value = raw.get(field)
+            # Missing counters are unknown, not evidence of zero activity.
+            row[field] = value if type(value) is int and value >= 0 else None
         row["status"] = "success" if raw.get("status") == "success" else "other"
         sources.append(row)
-    totals = {key: sum(row[key] for row in sources) for key in FIELDS}
+    totals = {key: (sum(row[key] for row in sources)
+                    if all(row[key] is not None for row in sources) else None)
+              for key in FIELDS}
     ai_candidates = ai_report.get("candidate_count")
     agreement = ai_report.get("agreement") or []
     recommended = ai_report.get("ai_recommended") or []
@@ -106,7 +110,8 @@ def summarize_production(source_rows, ai_report, run_id):
             "traditional_selected_count": len(traditional),
             "agreement_count": len(agreement),
         },
-        "candidate_count_matches_source_totals": ai_candidates == totals["candidates"],
+        "candidate_count_matches_source_totals": (ai_candidates == totals["candidates"]
+                                                   if ai_candidates is not None and totals["candidates"] is not None else None),
         "quality_unattempted": totals["quota_limited"],
         "quota_unattempted_is_not_quality_failure": True,
         "production_source_urls_exported": False,

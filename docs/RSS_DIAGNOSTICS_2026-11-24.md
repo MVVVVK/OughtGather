@@ -1,5 +1,7 @@
 # RSS 实测与候选池复核：2026-11-24
 
+> **第三阶段更新：** 两次公开快照、匿名运行 #31 统计和最新拟议清单见 [第三阶段审计报告](RSS_PHASE3_AUDIT.md)。本文保留先前阶段的时间范围及数据缺口。
+
 本报告基于 [GitHub Actions run 45244541615](https://github.com/MVVVVK/OughtGather/actions/runs/45244541615) 的只读公开探测；时间统一列为北京时间（UTC+8）。完整的哈希级元数据在该运行的 `rss-public-diagnostic` Artifact（计划于 2026-12-01 03:02 北京时间到期），不包含 RSS 正文、摘要文本、文章标题、私有配置或认证信息。[持久化汇总数据](data/rss_probe_2026-11-24.json)包含每源指标及比较值，不包含单篇正文。
 
 ## 文件整合

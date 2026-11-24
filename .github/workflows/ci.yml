@@ -45,11 +45,7 @@ jobs:
 
   rss-public-diagnostics:
     # Manual only; restricted to the audit branch. No Secrets or production config.
-    if: >-
-      (github.event_name == 'pull_request' && github.event.pull_request.number == 8 &&
-       github.event.pull_request.head.repo.full_name == github.repository &&
-       github.head_ref == 'codex/rss-source-quality-audit') ||
-      (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/codex/rss-source-quality-audit')
+    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/codex/rss-source-quality-audit'
     runs-on: ubuntu-latest
     permissions:
       contents: read

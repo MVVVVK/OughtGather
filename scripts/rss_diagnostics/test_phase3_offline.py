@@ -76,3 +76,14 @@ def test_audit_does_not_infer_production_cap_effect_from_public_feed():
     assert sample["production"]["ai"]["skipped_candidate_cap"] == 0
     assert sample["evidence"]["semantic_and_cross_language_overlap"] == "unverified"
     assert "secret.invalid" not in str(sample)
+
+
+def test_missing_source_counters_remain_unknown():
+    result = phase.summarize_production(
+        [{"rss_returned": 4, "candidates": None}],
+        {"candidate_count": 4, "ai_recommended": []}, 99,
+    )
+    assert result["sources"][0]["candidates"] is None
+    assert result["totals"]["candidates"] is None
+    assert result["candidate_count_matches_source_totals"] is None
+    assert result["totals"]["failed"] is None

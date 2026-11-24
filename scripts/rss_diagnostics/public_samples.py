@@ -20,12 +20,15 @@ NAMES = {
     'Le Monde — International', 'Le Monde — Justice', 'Le Monde — Économie',
     'Le Monde — Les Décodeurs',
 }
+PUBLIC_HOSTS = {'feeds.bbci.co.uk', 'www.theguardian.com', 'www.france24.com',
+                'www.rfi.fr', 'www.lemonde.fr'}
 
 
 def read_sample(source):
     url = source['url']
     parts = urlsplit(url)
-    if parts.scheme != 'https' or not parts.netloc:
+    if (parts.scheme != 'https' or parts.hostname not in PUBLIC_HOSTS or
+            parts.username or parts.password or parts.port not in (None, 443)):
         return {'source': source['name'], 'status': 'invalid_url'}
     try:
         status, robots = rss_probe.fetch(f'https://{parts.netloc}/robots.txt')
