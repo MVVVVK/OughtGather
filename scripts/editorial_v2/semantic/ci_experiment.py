@@ -66,7 +66,10 @@ def run(report_path='b3-e5-report.json', *, downloader=_download, encoder_factor
         norms = [math.sqrt(sum(x*x for x in v)) for v in vectors]
         if any(not math.isfinite(n) or abs(n - 1.0) > 1e-4 for n in norms): raise ValueError('invalid normalization')
         def dot(a, b): return sum(x*y for x, y in zip(vectors[a], vectors[b]))
+        torch_module = getattr(model, 'torch', None)
         report.update(status='ok', failure_stage=None, dimensions=384, title_count=len(TITLES),
+                      device='cpu', max_tokens=512, prefix='query:', pooling='attention_mask_mean_l2',
+                      torch_version=str(torch_module.__version__) if torch_module is not None else None,
                       norm_min=round(min(norms), 6), norm_max=round(max(norms), 6),
                       paired_mean_cosine=round((dot(0, 1) + dot(2, 3)) / 2, 6),
                       unrelated_mean_cosine=round((dot(0, 2) + dot(1, 3)) / 2, 6),
