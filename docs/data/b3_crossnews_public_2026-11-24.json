@@ -1,0 +1,35 @@
+{
+  "dataset_sha256": "4a8fde8f4c6bcbfe23b314833acc74cba76d58448d0db03350f3b8b044688edb",
+  "evaluated_cross_language_pairs": 213,
+  "excluded_pairs": 287,
+  "counts": {
+    "B2": {
+      "tp": 0,
+      "fp": 0,
+      "fn": 14,
+      "tn": 199,
+      "abstained": 0,
+      "precision": null,
+      "recall": 0.0,
+      "f1": 0.0
+    },
+    "B3": {
+      "tp": 0,
+      "fp": 0,
+      "fn": 14,
+      "tn": 199,
+      "abstained": 213,
+      "precision": null,
+      "recall": 0.0,
+      "f1": 0.0
+    }
+  },
+  "label_definition": "similar vs different topic/event proxy; somewhat_related and disagreement excluded",
+  "input_limitation": "first 800 characters, no publication dates; unknown treated as split for clustering metrics",
+  "dataset": "CrossNews-UA",
+  "dataset_version": "c4fa567661f5a42959fa3b458763ac48271f14eb",
+  "license": "CC-BY-4.0 per dataset card; rights in underlying publisher text require separate review",
+  "attribution": "TUM-NLP CrossNews-UA dataset (https://github.com/TUM-NLP/crossnews-ua)",
+  "repro_command": "python -m scripts.editorial_v2.crossnews_eval /path/to/crossnews-ua.csv",
+  "note": "Research-only aggregate; no source text included. No publication dates; event label is a similarity proxy. No importance labels or B0/B1 observations."
+}

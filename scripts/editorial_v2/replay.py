@@ -193,6 +193,7 @@ def main():
     parser.add_argument('snapshot')
     parser.add_argument('--ordering', choices=('original', 'id', 'newest'), default='original')
     parser.add_argument('--b2', action='store_true', help='also run the synthetic offline deterministic baseline')
+    parser.add_argument('--b3', action='store_true', help='run the experimental offline hybrid editor')
     parser.add_argument('--encrypted-private', action='store_true', help='decrypt private snapshot in memory using EDITORIAL_BENCHMARK_KEY')
     args = parser.parse_args()
     try:
@@ -204,8 +205,11 @@ def main():
             data = validate(json.loads(Path(args.snapshot).read_text(encoding='utf-8')))
         engines = {name: (lambda _c, result=result: copy.deepcopy(result)) for name, result in data['recorded_results'].items()}
         if args.b2:
-            from .b2 import select
-            engines['B2'] = lambda candidates: select(candidates, data['captured_at'], capacity=16)
+            from .b2 import select as select_b2
+            engines['B2'] = lambda candidates: select_b2(candidates, data['captured_at'], capacity=16)
+        if args.b3:
+            from .b3 import select as select_b3
+            engines['B3'] = lambda candidates: select_b3(candidates, data['captured_at'], capacity=16)
         print(json.dumps(replay(data, engines, args.ordering, allow_private=args.encrypted_private), sort_keys=True, ensure_ascii=False))
     except (ValueError, KeyError, OSError, TypeError):
         parser.exit(2, 'Invalid or inaccessible snapshot. No content was emitted.\n')
