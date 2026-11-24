@@ -8,11 +8,14 @@ from ebooklib import epub
 
 from src.processors.content_processor import ContentProcessor
 from src.epub.i18n import EPUBTranslator
+from src.epub.typography import language_attributes
 
 
 from typing import List, Dict
 
-def generate_toc_link(target_id: str, translator: EPUBTranslator = None) -> str:
+def generate_toc_link(
+    target_id: str, translator: EPUBTranslator = None, *, language: str | None = None
+) -> str:
     """
     生成统一的 “返回目录” 超链接 HTML 片段
 
@@ -23,7 +26,7 @@ def generate_toc_link(target_id: str, translator: EPUBTranslator = None) -> str:
         str: HTML 片段
     """
     translator = translator or EPUBTranslator()
-    return f'<p class=\"toc-link\"><a href=\"overview.xhtml#{target_id}\">{translator("navigation.back_to_contents")}</a></p>'
+    return f'<p{language_attributes(language)} class=\"toc-link\"><a href=\"overview.xhtml#{target_id}\">{translator("navigation.back_to_contents")}</a></p>'
 
 
 def create_section_divider_page(
@@ -31,7 +34,8 @@ def create_section_divider_page(
     file_name: str,
     target_toc_id: str,
     articles_info: List[Dict[str, str]] = None,
-    translator: EPUBTranslator = None
+    translator: EPUBTranslator = None,
+    language: str | None = None,
 ) -> epub.EpubHtml:
     """
     创建统一的章节分隔页 (EpubHtml 对象)
@@ -50,7 +54,10 @@ def create_section_divider_page(
     translator = translator or EPUBTranslator()
     safe_title = html_module.escape(section_title)
     rendered_title = ContentProcessor.render_text_with_emojis(section_title)
-    toc_link = generate_toc_link(target_toc_id, translator)
+    toc_link = generate_toc_link(
+        target_toc_id, translator, language=translator.locale if language else None
+    )
+    section_attrs = language_attributes(language)
 
     articles_html = ""
     if articles_info:
@@ -68,29 +75,32 @@ def create_section_divider_page(
         for article in articles_info:
             safe_art_title = ContentProcessor.render_text_with_emojis(article["title"])
             safe_art_href = html_module.escape(article["file_name"])
+            article_attrs = language_attributes(article.get("language"))
             articles_html += (
                 f'            <li style="{STYLE_NESTED_LI}">'
-                f'<a class="article-link" href="{safe_art_href}" style="{STYLE_ARTICLE_LINK}">'
+                f'<a class="article-link" href="{safe_art_href}"{article_attrs} style="{STYLE_ARTICLE_LINK}">'
                 f'{safe_art_title}</a></li>\n'
             )
         articles_html += f'        </ol>\n'
         articles_html += f'    </div>\n'
 
     content = f"""<!DOCTYPE html>
-<html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops" epub:prefix="z3998: http://www.daisy.org/z3998/2012/vocab/structure/#" lang="{translator.locale}" xml:lang="{translator.locale}">
+<html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops" epub:prefix="z3998: http://www.daisy.org/z3998/2012/vocab/structure/#" {language_attributes(language or translator.locale)}>
 <head>
     <title>{safe_title}</title>
     <link rel="stylesheet" type="text/css" href="style/default.css"/>
 </head>
 <body>
-    <h2>{rendered_title}</h2>
+    <h2{section_attrs}>{rendered_title}</h2>
     {toc_link}
 {articles_html}</body>
 </html>"""
 
     divider = epub.EpubHtml(
         title=section_title,
-        file_name=file_name
+        file_name=file_name,
+        lang=language,
     )
+    divider.add_link(href="style/default.css", rel="stylesheet")
     divider.content = content
     return divider

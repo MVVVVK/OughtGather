@@ -40,6 +40,9 @@ jobs:
       - name: Run tests
         run: python -m pytest tests/ -v --tb=short
 
+      - name: Run Cloudflare Worker tests
+        run: node --test cloudflare-worker/index.test.mjs
+
       - name: Test public RSS diagnostics offline
         run: python -m pytest -o addopts= scripts/rss_diagnostics/test_rss_probe.py scripts/rss_diagnostics/test_phase3_offline.py scripts/rss_diagnostics/test_public_samples.py scripts/rss_diagnostics/test_event_ledger.py -q
 

@@ -47,7 +47,8 @@ def compare_exact(source_rows):
     out = []
     for main, branch in PAIRS:
         a, b = rows.get(main), rows.get(branch)
-        if not a or not b or a.get("status") != "ok" or b.get("status") != "ok":
+        if (not a or not b or a.get("status") != "ok" or b.get("status") != "ok"
+                or not isinstance(a.get("items"), list) or not isinstance(b.get("items"), list)):
             out.append({"main": main, "branch": branch, "status": "unverified"})
             continue
         aa = [item for item in a.get("items", []) if item.get("within_7_days")]
@@ -89,13 +90,15 @@ def summarize_production(source_rows, ai_report, run_id):
             # Missing counters are unknown, not evidence of zero activity.
             row[field] = value if type(value) is int and value >= 0 else None
         sources.append(row)
+    # A one- or two-source total is too close to a per-source fingerprint.
+    # This threshold does not guarantee anonymity for larger groups.
     totals = {key: (sum(row[key] for row in sources)
-                    if all(row[key] is not None for row in sources) else None)
+                    if len(sources) >= 3 and all(row[key] is not None for row in sources) else None)
               for key in FIELDS}
     ai_candidates = ai_report.get("candidate_count")
-    agreement = ai_report.get("agreement") or []
-    recommended = ai_report.get("ai_recommended") or []
-    traditional = ai_report.get("traditional_selected") or []
+    def list_count(key):
+        value = ai_report.get(key)
+        return len(value) if isinstance(value, list) else None
     cap = ai_report.get("candidate_cap")
     return {
         "run_id": str(run_id), "source_count": len(sources), "totals": totals,
@@ -104,9 +107,9 @@ def summarize_production(source_rows, ai_report, run_id):
             "candidate_count": ai_candidates, "candidate_cap": cap,
             "skipped_candidate_cap": ai_report.get("skipped_candidate_cap"),
             "topic_count_after_audit": ai_report.get("topic_count_after_audit"),
-            "ai_recommended_count": len(recommended),
-            "traditional_selected_count": len(traditional),
-            "agreement_count": len(agreement),
+            "ai_recommended_count": list_count("ai_recommended"),
+            "traditional_selected_count": list_count("traditional_selected"),
+            "agreement_count": list_count("agreement"),
         },
         "candidate_count_matches_source_totals": (ai_candidates == totals["candidates"]
                                                    if ai_candidates is not None and totals["candidates"] is not None else None),

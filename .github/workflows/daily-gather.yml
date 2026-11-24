@@ -26,6 +26,10 @@ on:
         description: "Reset failed-article retry counters (published history is retained)"
         type: boolean
         default: false
+      force_publish:
+        description: "Intentionally publish again after today's verified delivery"
+        type: boolean
+        default: false
   repository_dispatch:  # 支持 Cloudflare Workers 等外部触发
     types: [Daily_Gather_cf_triggerd]
 
@@ -37,11 +41,51 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  publication-gate:
+    runs-on: ubuntu-latest
+    outputs:
+      run: ${{ steps.decision.outputs.run }}
+      day: ${{ steps.day.outputs.day }}
+    steps:
+      - name: Determine publication day
+        id: day
+        env:
+          TZ: Asia/Shanghai
+        run: echo "day=$(date +%F)" >> "$GITHUB_OUTPUT"
+      - name: Restore verified publication marker
+        if: ${{ !inputs.test_mode }}
+        id: marker
+        uses: actions/cache/restore@v5
+        with:
+          path: .publication-marker
+          key: publication-v1-${{ steps.day.outputs.day }}
+      - name: Decide whether to publish
+        id: decision
+        env:
+          HIT: ${{ steps.marker.outputs.cache-hit }}
+          TEST_MODE: ${{ inputs.test_mode }}
+          FORCE: ${{ inputs.force_publish }}
+        run: |
+          if [ "$HIT" = true ] && [ "$TEST_MODE" != true ] && [ "$FORCE" != true ]; then
+            echo 'run=false' >> "$GITHUB_OUTPUT"
+          else
+            echo 'run=true' >> "$GITHUB_OUTPUT"
+          fi
+      - name: "Health: duplicate suppressed"
+        if: ${{ steps.decision.outputs.run == 'false' }}
+        run: echo 'A verified edition already exists for this publication day.'
+
   gather:
+    needs: publication-gate
+    if: ${{ needs.publication-gate.outputs.run == 'true' }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
 
     steps:
+      - name: "Health: test only"
+        if: ${{ inputs.test_mode }}
+        run: echo 'Isolated test run; no production delivery.'
+
       - name: Checkout repository
         uses: actions/checkout@v5
         with:
@@ -116,7 +160,7 @@ jobs:
 
       - name: Run Ought Gather
         env:
-          AI_EDITOR_MODE: ${{ inputs.ai_editor_mode_override == 'shadow' && 'shadow' || inputs.ai_editor_mode_override == 'off' && 'off' || vars.AI_EDITOR_MODE || 'off' }}
+          AI_EDITOR_MODE: ${{ inputs.ai_editor_mode_override == 'off' && 'off' || inputs.ai_editor_mode_override == 'shadow' && 'shadow' || vars.AI_EDITOR_MODE || ((github.event_name == 'schedule' || github.event_name == 'repository_dispatch') && 'shadow' || 'off') }}
           AI_TEST_OVERRIDE: ${{ inputs.run_ai_shadow }}
           AI_MAX_CANDIDATES: ${{ vars.AI_MAX_CANDIDATES }}
           AI_MAX_EXCERPT_CHARS: ${{ vars.AI_MAX_EXCERPT_CHARS }}
@@ -164,6 +208,14 @@ jobs:
           fi
           python -u src/main.py "${args[@]}"
 
+      - name: Check verified delivery for daily marker
+        if: ${{ always() }}
+        id: verified
+        continue-on-error: true
+        env:
+          HEALTH_TEST_MODE: ${{ inputs.test_mode }}
+        run: python scripts/publication_health.py
+
       - name: Save dedup records
         if: ${{ success() && !inputs.test_mode }}
         uses: actions/cache/save@v5
@@ -171,11 +223,28 @@ jobs:
           path: data/fetched_urls.txt
           key: ${{ runner.os }}-dedup-v2-${{ github.run_id }}-${{ github.run_attempt }}
 
+      - name: Create verified publication marker
+        if: ${{ always() && steps.verified.outputs.verified == 'true' }}
+        continue-on-error: true
+        env:
+          PUBLICATION_DAY: ${{ needs.publication-gate.outputs.day }}
+        run: |
+          mkdir -p .publication-marker
+          printf '%s\n' "$PUBLICATION_DAY" > .publication-marker/day
+
+      - name: Save verified publication marker
+        if: ${{ always() && steps.verified.outputs.verified == 'true' }}
+        continue-on-error: true
+        uses: actions/cache/save@v5
+        with:
+          path: .publication-marker
+          key: publication-v1-${{ needs.publication-gate.outputs.day }}
+
       - name: Run AI Editor Shadow
         if: ${{ success() && (!inputs.test_mode || inputs.run_ai_shadow) }}
         continue-on-error: true
         env:
-          AI_EDITOR_MODE: ${{ inputs.ai_editor_mode_override == 'shadow' && 'shadow' || inputs.ai_editor_mode_override == 'off' && 'off' || vars.AI_EDITOR_MODE || 'off' }}
+          AI_EDITOR_MODE: ${{ inputs.ai_editor_mode_override == 'off' && 'off' || inputs.ai_editor_mode_override == 'shadow' && 'shadow' || vars.AI_EDITOR_MODE || ((github.event_name == 'schedule' || github.event_name == 'repository_dispatch') && 'shadow' || 'off') }}
           DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
           AI_MEMORY_KEY: ${{ secrets.AI_MEMORY_KEY }}
           WEBDAV_ENABLED: "true"
@@ -198,6 +267,43 @@ jobs:
           AI_OUTPUT_PRICE_PER_MILLION: ${{ vars.AI_OUTPUT_PRICE_PER_MILLION }}
           AI_PRICING_VERSION: ${{ vars.AI_PRICING_VERSION }}
         run: python -m src.ai
+
+      - name: Capture publication health
+        if: always()
+        id: health
+        continue-on-error: true
+        env:
+          HEALTH_TEST_MODE: ${{ inputs.test_mode }}
+          HEALTH_AI_MODE: ${{ inputs.ai_editor_mode_override == 'off' && 'off' || inputs.ai_editor_mode_override == 'shadow' && 'shadow' || vars.AI_EDITOR_MODE || ((github.event_name == 'schedule' || github.event_name == 'repository_dispatch') && 'shadow' || 'off') }}
+        run: python scripts/publication_health.py
+
+      - name: "Health: EPUB missing"
+        if: ${{ always() && !inputs.test_mode && steps.health.outputs.epub == 'missing' }}
+        run: echo 'No EPUB was generated.'
+      - name: "Health: WebDAV delivered"
+        if: ${{ always() && !inputs.test_mode && steps.health.outputs.verified == 'true' }}
+        run: echo 'An EPUB was generated and WebDAV delivery was verified.'
+      - name: "Health: WebDAV failed"
+        if: ${{ always() && !inputs.test_mode && steps.health.outputs.epub == 'generated' && steps.health.outputs.webdav == 'failed' }}
+        run: echo 'An EPUB was generated but WebDAV delivery failed.'
+      - name: "Health: WebDAV unknown"
+        if: ${{ always() && !inputs.test_mode && steps.health.outputs.epub == 'generated' && steps.health.outputs.webdav == 'unknown' }}
+        run: echo 'An EPUB was generated but WebDAV delivery status is unavailable.'
+      - name: "Health: AI degraded"
+        if: ${{ always() && !inputs.test_mode && steps.health.outputs.ai == 'degraded' }}
+        run: echo 'AI Shadow did not complete successfully; publication remains independent.'
+      - name: "Health: AI off"
+        if: ${{ always() && !inputs.test_mode && steps.health.outputs.ai == 'off' }}
+        run: echo 'AI Shadow was explicitly disabled.'
+
+      - name: Upload publication health
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: publication-health
+          path: output/publication-health.json
+          if-no-files-found: ignore
+          retention-days: 7
 
       - name: Upload AI editor report
         if: always()

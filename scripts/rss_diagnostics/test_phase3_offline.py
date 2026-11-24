@@ -1,5 +1,6 @@
 """No-network verification for phase-three audit and privacy boundaries."""
 import importlib.util
+import json
 from pathlib import Path
 
 spec = importlib.util.spec_from_file_location(
@@ -46,16 +47,16 @@ def test_anonymization_and_source_count_reconciliation():
         "status": "success",
     }]
     ai = {
-        "mode": "shadow", "status": "ok", "candidate_count": 5,
+        "mode": "shadow", "status": "ok", "candidate_count": 15,
         "candidate_cap": 200, "skipped_candidate_cap": 0,
         "agreement": ["private-candidate"], "ai_recommended": ["private-candidate"],
         "traditional_selected": ["private-candidate"],
     }
-    result = phase.summarize_production(raw, ai, 123)
-    assert result["source_count"] == 1
+    result = phase.summarize_production(raw * 3, ai, 123)
+    assert result["source_count"] == 3
     assert "sources" not in result and result["per_source_rows_exported"] is False
-    assert result["totals"]["rss_returned"] == 10
-    assert result["quality_unattempted"] == 3
+    assert result["totals"]["rss_returned"] == 30
+    assert result["quality_unattempted"] == 9
     assert result["candidate_count_matches_source_totals"] is True
     assert "Private Name" not in str(result)
     assert "private.invalid" not in str(result)
@@ -67,13 +68,13 @@ def test_audit_does_not_infer_production_cap_effect_from_public_feed():
     sample = phase.audit(
         {"checked_at": "2026-11-23T19:00:00Z", "sources": []},
         [{"source_url": "https://secret.invalid/", "rss_returned": 2,
-          "candidates": 2, "quota_limited": 2}],
-        {"candidate_count": 2, "candidate_cap": 200,
+          "candidates": 2, "quota_limited": 2}] * 3,
+        {"candidate_count": 6, "candidate_cap": 200,
          "skipped_candidate_cap": 0, "ai_recommended": [],
          "traditional_selected": [], "agreement": []},
         22,
     )
-    assert sample["production"]["quality_unattempted"] == 2
+    assert sample["production"]["quality_unattempted"] == 6
     assert sample["production"]["ai"]["skipped_candidate_cap"] == 0
     assert sample["evidence"]["semantic_and_cross_language_overlap"] == "unverified"
     assert sample["evidence"]["public_snapshot_count"] == 1
@@ -95,8 +96,39 @@ def test_distinct_source_fingerprints_are_never_exported():
     rows = [
         {"rss_returned": 11, "historical_dedup": 8, "candidates": 3},
         {"rss_returned": 47, "historical_dedup": 10, "candidates": 37},
+        {"rss_returned": 2, "historical_dedup": 1, "candidates": 1},
     ]
-    report = phase.summarize_production(rows, {"candidate_count": 40}, 1)
-    assert report["source_count"] == 2
-    assert report["totals"]["rss_returned"] == 58
+    report = phase.summarize_production(rows, {"candidate_count": 41}, 1)
+    assert report["source_count"] == 3
+    assert report["totals"]["rss_returned"] == 60
     assert "sources" not in report and "F01" not in str(report) and "F02" not in str(report)
+
+
+def test_summary_without_item_digests_is_unverified_not_zero():
+    rows = [{"name": name, "status": "ok"} for name in ("BBC World", "BBC News — Africa")]
+    result = next(row for row in phase.compare_exact(rows) if row["main"] == "BBC World")
+    assert result["status"] == "unverified" and "exact_either" not in result
+
+
+def test_missing_ai_counts_and_small_source_groups_are_not_reported_as_zero():
+    for rows in ([], [{"rss_returned": 7}], [{"rss_returned": 7}] * 2):
+        result = phase.summarize_production(rows, {}, 1)
+        assert result["totals"]["rss_returned"] is None
+        assert result["ai"]["ai_recommended_count"] is None
+        assert result["ai"]["agreement_count"] is None
+    assert phase.summarize_production([{}] * 3, {"agreement": []}, 1)["ai"]["agreement_count"] == 0
+
+
+def test_committed_public_snapshot_agrees_with_available_first_snapshot_comparisons():
+    data = Path(__file__).resolve().parents[2] / "docs/data"
+    first = json.loads((data / "rss_probe_2026-11-24.json").read_text())
+    second = json.loads((data / "rss_snapshot_2026-11-24_0902.json").read_text())
+    phase3 = json.loads((data / "rss_phase3_redacted_2026-11-24.json").read_text())
+    assert all("items" not in row for snapshot in (first, second) for row in snapshot["sources"])
+    compared = {(r["main"], r["branch"]): r for r in phase3["public_comparisons"]}
+    for row in first["comparisons"]:
+        if "exact_url_or_title_overlap" in row:
+            assert compared[(row["main"], row["branch"])]["exact_either"] == row["exact_url_or_title_overlap"]
+    production = phase3["production"]
+    assert "sources" not in production and production["per_source_rows_exported"] is False
+    assert production["totals"]["candidates"] == production["ai"]["candidate_count"]
