@@ -41,11 +41,15 @@ jobs:
         run: python -m pytest tests/ -v --tb=short
 
       - name: Test public RSS diagnostics offline
-        run: python -m pytest -o addopts= scripts/rss_diagnostics/test_rss_probe.py scripts/rss_diagnostics/test_phase3_offline.py -q
+        run: python -m pytest -o addopts= scripts/rss_diagnostics/test_rss_probe.py scripts/rss_diagnostics/test_phase3_offline.py scripts/rss_diagnostics/test_public_samples.py -q
 
   rss-public-diagnostics:
     # Manual only; restricted to the audit branch. No Secrets or production config.
-    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/codex/rss-source-quality-audit'
+    if: >-
+      (github.event_name == 'pull_request' && github.event.pull_request.number == 8 &&
+       github.event.pull_request.head.repo.full_name == github.repository &&
+       github.head_ref == 'codex/rss-source-quality-audit') ||
+      (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/codex/rss-source-quality-audit')
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -60,9 +64,11 @@ jobs:
       - name: Install diagnostic dependencies
         run: python -m pip install 'feedparser>=6,<7' 'httpx>=0.25,<1' 'pytest>=7,<10' 'beautifulsoup4>=4.12,<5'
       - name: Test diagnostics offline
-        run: python -m pytest -o addopts= scripts/rss_diagnostics/test_rss_probe.py scripts/rss_diagnostics/test_phase3_offline.py -q
+        run: python -m pytest -o addopts= scripts/rss_diagnostics/test_rss_probe.py scripts/rss_diagnostics/test_phase3_offline.py scripts/rss_diagnostics/test_public_samples.py -q
       - name: Probe public feeds without credentials
         run: python scripts/rss_diagnostics/rss_probe.py scripts/rss_diagnostics/sources.json rss-diagnostic.json
+      - name: Inspect bounded public RSS titles
+        run: python scripts/rss_diagnostics/public_samples.py scripts/rss_diagnostics/sources.json
       - name: Upload sanitized diagnostic results
         uses: actions/upload-artifact@v4
         with:
