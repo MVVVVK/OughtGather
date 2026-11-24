@@ -24,12 +24,21 @@ class FakeEncoder:
 
 def test_smoke_plumbing_outputs_aggregates_only(tmp_path):
     root = make_snapshot(tmp_path); report = tmp_path / 'report.json'
-    assert task.run(report, downloader=lambda: root, encoder_factory=FakeEncoder)
+    assert task.run(report, downloader=lambda: root, encoder_factory=FakeEncoder, benchmark_runner=lambda _: {'fixture_only': True})
     data = json.loads(report.read_text())
     assert data['status'] == 'ok' and data['dimensions'] == 384
     assert data['downloaded_bytes'] == 4 and data['norm_min'] == data['norm_max'] == 1
     assert data['data_experiment'] == 'skipped_license_unconfirmed'
     assert not any(title in report.read_text() for title in task.TITLES)
+
+
+def test_later_validation_failure_preserves_smoke_status(tmp_path):
+    root = make_snapshot(tmp_path); report = tmp_path / 'report.json'
+    def fail(_): raise ValueError('sensitive text')
+    assert not task.run(report, downloader=lambda: root, encoder_factory=FakeEncoder, benchmark_runner=fail)
+    data = json.loads(report.read_text())
+    assert data['smoke_status'] == 'ok' and data['failure_stage'] == 'synthetic_validation'
+    assert 'sensitive text' not in report.read_text()
 
 
 def test_download_403_is_sanitized_and_no_inference(tmp_path):

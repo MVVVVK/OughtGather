@@ -1,0 +1,2007 @@
+{
+  "schema_version": 1,
+  "license": "CC0-1.0",
+  "description": "Original entirely fictional titles authored for this test; not real news.",
+  "pairs": [
+    {
+      "pair_id": "case-01-1",
+      "split": "dev",
+      "event_a": "case-01-a",
+      "event_b": "case-01-a",
+      "label": "same_event",
+      "category": "same_crosslingual",
+      "a": {
+        "candidate_id": "case-01-1-a",
+        "title": "The Ardel council approves a new water reservoir",
+        "language": "en",
+        "published_at": null
+      },
+      "b": {
+        "candidate_id": "case-01-1-b",
+        "title": "Le conseil d’Ardel approuve un nouveau réservoir d’eau",
+        "language": "fr",
+        "published_at": null
+      }
+    },
+    {
+      "pair_id": "case-01-2",
+      "split": "dev",
+      "event_a": "case-01-a",
+      "event_b": "case-01-a",
+      "label": "same_event",
+      "category": "same_crosslingual",
+      "a": {
+        "candidate_id": "case-01-2-a",
+        "title": "Ardel secures funding for its approved reservoir",
+        "language": "en",
+        "published_at": "2026-11-23T10:00:00Z"
+      },
+      "b": {
+        "candidate_id": "case-01-2-b",
+        "title": "Ardel obtient le financement de son réservoir approuvé",
+        "language": "fr",
+        "published_at": "2026-11-23T16:00:00Z"
+      }
+    },
+    {
+      "pair_id": "case-01-3",
+      "split": "dev",
+      "event_a": "case-01-a",
+      "event_b": "case-01-a",
+      "label": "substantive_update",
+      "category": "substantive_update",
+      "a": {
+        "candidate_id": "case-01-3-a",
+        "title": "The Ardel council approves a new water reservoir",
+        "language": "en",
+        "published_at": "2026-11-23T10:00:00Z"
+      },
+      "b": {
+        "candidate_id": "case-01-3-b",
+        "title": "Ardel obtient le financement de son réservoir approuvé",
+        "language": "fr",
+        "published_at": "2026-11-23T16:00:00Z"
+      }
+    },
+    {
+      "pair_id": "case-01-4",
+      "split": "dev",
+      "event_a": "case-01-a",
+      "event_b": "case-01-b",
+      "label": "different",
+      "category": "same_actor_different_event",
+      "a": {
+        "candidate_id": "case-01-4-a",
+        "title": "The Ardel council approves a new water reservoir",
+        "language": "en",
+        "published_at": "2026-11-23T10:00:00Z"
+      },
+      "b": {
+        "candidate_id": "case-01-4-b",
+        "title": "Le conseil d’Ardel annule son festival des arts d’été",
+        "language": "fr",
+        "published_at": "2026-11-23T16:00:00Z"
+      }
+    },
+    {
+      "pair_id": "case-01-5",
+      "split": "dev",
+      "event_a": "case-01-a",
+      "event_b": "case-01-b",
+      "label": "different",
+      "category": "related_different_event",
+      "a": {
+        "candidate_id": "case-01-5-a",
+        "title": "Ardel obtient le financement de son réservoir approuvé",
+        "language": "fr",
+        "published_at": null
+      },
+      "b": {
+        "candidate_id": "case-01-5-b",
+        "title": "The Ardel council cancels its summer arts festival",
+        "language": "en",
+        "published_at": null
+      }
+    },
+    {
+      "pair_id": "case-02-1",
+      "split": "dev",
+      "event_a": "case-02-a",
+      "event_b": "case-02-a",
+      "label": "same_event",
+      "category": "same_crosslingual",
+      "a": {
+        "candidate_id": "case-02-1-a",
+        "title": "The Borian parliament passes a coastal flood law",
+        "language": "en",
+        "published_at": "2026-11-23T10:00:00Z"
+      },
+      "b": {
+        "candidate_id": "case-02-1-b",
+        "title": "Le parlement borian adopte une loi contre les inondations côtières",
+        "language": "fr",
+        "published_at": "2026-11-23T16:00:00Z"
+      }
+    },
+    {
+      "pair_id": "case-02-2",
+      "split": "dev",
+      "event_a": "case-02-a",
+      "event_b": "case-02-a",
+      "label": "same_event",
+      "category": "same_crosslingual",
+      "a": {
+        "candidate_id": "case-02-2-a",
+        "title": "Borian flood law receives presidential approval",
+        "language": "en",
+        "published_at": "2026-11-23T10:00:00Z"
+      },
+      "b": {
+        "candidate_id": "case-02-2-b",
+        "title": "La loi boriane contre les inondations est promulguée",
+        "language": "fr",
+        "published_at": "2026-11-23T16:00:00Z"
+      }
+    },
+    {
+      "pair_id": "case-02-3",
+      "split": "dev",
+      "event_a": "case-02-a",
+      "event_b": "case-02-a",
+      "label": "substantive_update",
+      "category": "substantive_update",
+      "a": {
+        "candidate_id": "case-02-3-a",
+        "title": "The Borian parliament passes a coastal flood law",
+        "language": "en",
+        "published_at": "2026-11-23T10:00:00Z"
+      },
+      "b": {
+        "candidate_id": "case-02-3-b",
+        "title": "La loi boriane contre les inondations est promulguée",
+        "language": "fr",
+        "published_at": "2026-11-23T16:00:00Z"
+      }
+    },
+    {
+      "pair_id": "case-02-4",
+      "split": "dev",
+      "event_a": "case-02-a",
+      "event_b": "case-02-b",
+      "label": "different",
+      "category": "same_actor_different_event",
+      "a": {
+        "candidate_id": "case-02-4-a",
+        "title": "The Borian parliament passes a coastal flood law",
+        "language": "en",
+        "published_at": "2026-11-23T10:00:00Z"
+      },
+      "b": {
+        "candidate_id": "case-02-4-b",
+        "title": "Les députés borians débattent d’une taxe ferroviaire",
+        "language": "fr",
+        "published_at": "2026-11-23T16:00:00Z"
+      }
+    },
+    {
+      "pair_id": "case-02-5",
+      "split": "dev",
+      "event_a": "case-02-a",
+      "event_b": "case-02-b",
+      "label": "different",
+      "category": "related_different_event",
+      "a": {
+        "candidate_id": "case-02-5-a",
+        "title": "La loi boriane contre les inondations est promulguée",
+        "language": "fr",
+        "published_at": null
+      },
+      "b": {
+        "candidate_id": "case-02-5-b",
+        "title": "Borian lawmakers debate a new railway tax",
+        "language": "en",
+        "published_at": null
+      }
+    },
+    {
+      "pair_id": "case-03-1",
+      "split": "dev",
+      "event_a": "case-03-a",
+      "event_b": "case-03-a",
+      "label": "same_event",
+      "category": "same_crosslingual",
+      "a": {
+        "candidate_id": "case-03-1-a",
+        "title": "A Neris research team launches a weather satellite",
+        "language": "en",
+        "published_at": null
+      },
+      "b": {
+        "candidate_id": "case-03-1-b",
+        "title": "Une équipe de recherche de Neris lance un satellite météo",
+        "language": "fr",
+        "published_at": null
+      }
+    },
+    {
+      "pair_id": "case-03-2",
+      "split": "dev",
+      "event_a": "case-03-a",
+      "event_b": "case-03-a",
+      "label": "same_event",
+      "category": "same_crosslingual",
+      "a": {
+        "candidate_id": "case-03-2-a",
+        "title": "The Neris weather satellite sends its first images",
+        "language": "en",
+        "published_at": "2026-11-23T10:00:00Z"
+      },
+      "b": {
+        "candidate_id": "case-03-2-b",
+        "title": "Le satellite météo de Neris transmet ses premières images",
+        "language": "fr",
+        "published_at": "2026-11-23T16:00:00Z"
+      }
+    },
+    {
+      "pair_id": "case-03-3",
+      "split": "dev",
+      "event_a": "case-03-a",
+      "event_b": "case-03-a",
+      "label": "substantive_update",
+      "category": "substantive_update",
+      "a": {
+        "candidate_id": "case-03-3-a",
+        "title": "A Neris research team launches a weather satellite",
+        "language": "en",
+        "published_at": "2026-11-23T10:00:00Z"
+      },
+      "b": {
+        "candidate_id": "case-03-3-b",
+        "title": "Le satellite météo de Neris transmet ses premières images",
+        "language": "fr",
+        "published_at": "2026-11-23T16:00:00Z"
+      }
+    },
+    {
+      "pair_id": "case-03-4",
+      "split": "dev",
+      "event_a": "case-03-a",
+      "event_b": "case-03-b",
+      "label": "different",
+      "category": "same_actor_different_event",
+      "a": {
+        "candidate_id": "case-03-4-a",
+        "title": "A Neris research team launches a weather satellite",
+        "language": "en",
+        "published_at": "2026-11-23T10:00:00Z"
+      },
+      "b": {
+        "candidate_id": "case-03-4-b",
+        "title": "Des chercheurs de Neris identifient une espèce marine rare",
+        "language": "fr",
+        "published_at": "2026-11-23T16:00:00Z"
+      }
+    },
+    {
+      "pair_id": "case-03-5",
+      "split": "dev",
+      "event_a": "case-03-a",
+      "event_b": "case-03-b",
+      "label": "different",
+      "category": "related_different_event",
+      "a": {
+        "candidate_id": "case-03-5-a",
+        "title": "Le satellite météo de Neris transmet ses premières images",
+        "language": "fr",
+        "published_at": null
+      },
+      "b": {
+        "candidate_id": "case-03-5-b",
+        "title": "Neris researchers identify a rare marine species",
+        "language": "en",
+        "published_at": null
+      }
+    },
+    {
+      "pair_id": "case-04-1",
+      "split": "dev",
+      "event_a": "case-04-a",
+      "event_b": "case-04-a",
+      "label": "same_event",
+      "category": "same_crosslingual",
+      "a": {
+        "candidate_id": "case-04-1-a",
+        "title": "The Caldo central bank cuts its interest rate",
+        "language": "en",
+        "published_at": "2026-11-23T10:00:00Z"
+      },
+      "b": {
+        "candidate_id": "case-04-1-b",
+        "title": "La banque centrale de Caldo réduit son taux directeur",
+        "language": "fr",
+        "published_at": "2026-11-23T16:00:00Z"
+      }
+    },
+    {
+      "pair_id": "case-04-2",
+      "split": "dev",
+      "event_a": "case-04-a",
+      "event_b": "case-04-a",
+      "label": "same_event",
+      "category": "same_crosslingual",
+      "a": {
+        "candidate_id": "case-04-2-a",
+        "title": "Caldo lenders lower borrowing rates after the central bank cut",
+        "language": "en",
+        "published_at": "2026-11-23T10:00:00Z"
+      },
+      "b": {
+        "candidate_id": "case-04-2-b",
+        "title": "Les prêteurs de Caldo réduisent leurs taux après la baisse de la banque centrale",
+        "language": "fr",
+        "published_at": "2026-11-23T16:00:00Z"
+      }
+    },
+    {
+      "pair_id": "case-04-3",
+      "split": "dev",
+      "event_a": "case-04-a",
+      "event_b": "case-04-a",
+      "label": "substantive_update",
+      "category": "substantive_update",
+      "a": {
+        "candidate_id": "case-04-3-a",
+        "title": "The Caldo central bank cuts its interest rate",
+        "language": "en",
+        "published_at": "2026-11-23T10:00:00Z"
+      },
+      "b": {
+        "candidate_id": "case-04-3-b",
+        "title": "Les prêteurs de Caldo réduisent leurs taux après la baisse de la banque centrale",
+        "language": "fr",
+        "published_at": "2026-11-23T16:00:00Z"
+      }
+    },
+    {
+      "pair_id": "case-04-4",
+      "split": "dev",
+      "event_a": "case-04-a",
+      "event_b": "case-04-b",
+      "label": "different",
+      "category": "same_actor_different_event",
+      "a": {
+        "candidate_id": "case-04-4-a",
+        "title": "The Caldo central bank cuts its interest rate",
+        "language": "en",
+        "published_at": "2026-11-23T10:00:00Z"
+      },
+      "b": {
+        "candidate_id": "case-04-4-b",
+        "title": "Caldo approuve un accord ferroviaire transfrontalier",
+        "language": "fr",
+        "published_at": "2026-11-23T16:00:00Z"
+      }
+    },
+    {
+      "pair_id": "case-04-5",
+      "split": "dev",
+      "event_a": "case-04-a",
+      "event_b": "case-04-b",
+      "label": "different",
+      "category": "related_different_event",
+      "a": {
+        "candidate_id": "case-04-5-a",
+        "title": "Les prêteurs de Caldo réduisent leurs taux après la baisse de la banque centrale",
+        "language": "fr",
+        "published_at": null
+      },
+      "b": {
+        "candidate_id": "case-04-5-b",
+        "title": "Caldo approves a cross-border rail agreement",
+        "language": "en",
+        "published_at": null
+      }
+    },
+    {
+      "pair_id": "case-05-1",
+      "split": "dev",
+      "event_a": "case-05-a",
+      "event_b": "case-05-a",
+      "label": "same_event",
+      "category": "same_crosslingual",
+      "a": {
+        "candidate_id": "case-05-1-a",
+        "title": "Aster and Bellin agree to reopen their shared border",
+        "language": "en",
+        "published_at": null
+      },
+      "b": {
+        "candidate_id": "case-05-1-b",
+        "title": "Aster et Bellin acceptent de rouvrir leur frontière commune",
+        "language": "fr",
+        "published_at": null
+      }
+    },
+    {
+      "pair_id": "case-05-2",
+      "split": "dev",
+      "event_a": "case-05-a",
+      "event_b": "case-05-a",
+      "label": "same_event",
+      "category": "same_crosslingual",
+      "a": {
+        "candidate_id": "case-05-2-a",
+        "title": "The Aster Bellin border reopens after their agreement",
+        "language": "en",
+        "published_at": "2026-11-23T10:00:00Z"
+      },
+      "b": {
+        "candidate_id": "case-05-2-b",
+        "title": "La frontière entre Aster et Bellin rouvre après leur accord",
+        "language": "fr",
+        "published_at": "2026-11-23T16:00:00Z"
+      }
+    },
+    {
+      "pair_id": "case-05-3",
+      "split": "dev",
+      "event_a": "case-05-a",
+      "event_b": "case-05-a",
+      "label": "substantive_update",
+      "category": "substantive_update",
+      "a": {
+        "candidate_id": "case-05-3-a",
+        "title": "Aster and Bellin agree to reopen their shared border",
+        "language": "en",
+        "published_at": "2026-11-23T10:00:00Z"
+      },
+      "b": {
+        "candidate_id": "case-05-3-b",
+        "title": "La frontière entre Aster et Bellin rouvre après leur accord",
+        "language": "fr",
+        "published_at": "2026-11-23T16:00:00Z"
+      }
+    },
+    {
+      "pair_id": "case-05-4",
+      "split": "dev",
+      "event_a": "case-05-a",
+      "event_b": "case-05-b",
+      "label": "different",
+      "category": "same_actor_different_event",
+      "a": {
+        "candidate_id": "case-05-4-a",
+        "title": "Aster and Bellin agree to reopen their shared border",
+        "language": "en",
+        "published_at": "2026-11-23T10:00:00Z"
+      },
+      "b": {
+        "candidate_id": "case-05-4-b",
+        "title": "Aster annonce une subvention agricole distincte",
+        "language": "fr",
+        "published_at": "2026-11-23T16:00:00Z"
+      }
+    },
+    {
+      "pair_id": "case-05-5",
+      "split": "dev",
+      "event_a": "case-05-a",
+      "event_b": "case-05-b",
+      "label": "different",
+      "category": "related_different_event",
+      "a": {
+        "candidate_id": "case-05-5-a",
+        "title": "La frontière entre Aster et Bellin rouvre après leur accord",
+        "language": "fr",
+        "published_at": null
+      },
+      "b": {
+        "candidate_id": "case-05-5-b",
+        "title": "Aster announces a separate agricultural subsidy",
+        "language": "en",
+        "published_at": null
+      }
+    },
+    {
+      "pair_id": "case-06-1",
+      "split": "dev",
+      "event_a": "case-06-a",
+      "event_b": "case-06-a",
+      "label": "same_event",
+      "category": "same_crosslingual",
+      "a": {
+        "candidate_id": "case-06-1-a",
+        "title": "A quake strikes the fictional island of Daro",
+        "language": "en",
+        "published_at": "2026-11-23T10:00:00Z"
+      },
+      "b": {
+        "candidate_id": "case-06-1-b",
+        "title": "Un séisme frappe l’île fictive de Daro",
+        "language": "fr",
+        "published_at": "2026-11-23T16:00:00Z"
+      }
+    },
+    {
+      "pair_id": "case-06-2",
+      "split": "dev",
+      "event_a": "case-06-a",
+      "event_b": "case-06-a",
+      "label": "same_event",
+      "category": "same_crosslingual",
+      "a": {
+        "candidate_id": "case-06-2-a",
+        "title": "Daro emergency teams evacuate residents after the quake",
+        "language": "en",
+        "published_at": "2026-11-23T10:00:00Z"
+      },
+      "b": {
+        "candidate_id": "case-06-2-b",
+        "title": "Les secours de Daro évacuent les habitants après le séisme",
+        "language": "fr",
+        "published_at": "2026-11-23T16:00:00Z"
+      }
+    },
+    {
+      "pair_id": "case-06-3",
+      "split": "dev",
+      "event_a": "case-06-a",
+      "event_b": "case-06-a",
+      "label": "substantive_update",
+      "category": "substantive_update",
+      "a": {
+        "candidate_id": "case-06-3-a",
+        "title": "A quake strikes the fictional island of Daro",
+        "language": "en",
+        "published_at": "2026-11-23T10:00:00Z"
+      },
+      "b": {
+        "candidate_id": "case-06-3-b",
+        "title": "Les secours de Daro évacuent les habitants après le séisme",
+        "language": "fr",
+        "published_at": "2026-11-23T16:00:00Z"
+      }
+    },
+    {
+      "pair_id": "case-06-4",
+      "split": "dev",
+      "event_a": "case-06-a",
+      "event_b": "case-06-b",
+      "label": "different",
+      "category": "same_actor_different_event",
+      "a": {
+        "candidate_id": "case-06-4-a",
+        "title": "A quake strikes the fictional island of Daro",
+        "language": "en",
+        "published_at": "2026-11-23T10:00:00Z"
+      },
+      "b": {
+        "candidate_id": "case-06-4-b",
+        "title": "Daro ouvre un nouveau musée national",
+        "language": "fr",
+        "published_at": "2026-11-23T16:00:00Z"
+      }
+    },
+    {
+      "pair_id": "case-06-5",
+      "split": "dev",
+      "event_a": "case-06-a",
+      "event_b": "case-06-b",
+      "label": "different",
+      "category": "related_different_event",
+      "a": {
+        "candidate_id": "case-06-5-a",
+        "title": "Les secours de Daro évacuent les habitants après le séisme",
+        "language": "fr",
+        "published_at": null
+      },
+      "b": {
+        "candidate_id": "case-06-5-b",
+        "title": "Daro opens a new national museum",
+        "language": "en",
+        "published_at": null
+      }
+    },
+    {
+      "pair_id": "case-07-1",
+      "split": "dev",
+      "event_a": "case-07-a",
+      "event_b": "case-07-a",
+      "label": "same_event",
+      "category": "same_crosslingual",
+      "a": {
+        "candidate_id": "case-07-1-a",
+        "title": "The Enora court rules on a fictional river dispute",
+        "language": "en",
+        "published_at": null
+      },
+      "b": {
+        "candidate_id": "case-07-1-b",
+        "title": "Le tribunal d’Enora statue sur un litige fluvial fictif",
+        "language": "fr",
+        "published_at": null
+      }
+    },
+    {
+      "pair_id": "case-07-2",
+      "split": "dev",
+      "event_a": "case-07-a",
+      "event_b": "case-07-a",
+      "label": "same_event",
+      "category": "same_crosslingual",
+      "a": {
+        "candidate_id": "case-07-2-a",
+        "title": "Enora officials appeal the river dispute ruling",
+        "language": "en",
+        "published_at": "2026-11-23T10:00:00Z"
+      },
+      "b": {
+        "candidate_id": "case-07-2-b",
+        "title": "Les autorités d’Enora font appel du jugement sur le litige fluvial",
+        "language": "fr",
+        "published_at": "2026-11-23T16:00:00Z"
+      }
+    },
+    {
+      "pair_id": "case-07-3",
+      "split": "dev",
+      "event_a": "case-07-a",
+      "event_b": "case-07-a",
+      "label": "substantive_update",
+      "category": "substantive_update",
+      "a": {
+        "candidate_id": "case-07-3-a",
+        "title": "The Enora court rules on a fictional river dispute",
+        "language": "en",
+        "published_at": "2026-11-23T10:00:00Z"
+      },
+      "b": {
+        "candidate_id": "case-07-3-b",
+        "title": "Les autorités d’Enora font appel du jugement sur le litige fluvial",
+        "language": "fr",
+        "published_at": "2026-11-23T16:00:00Z"
+      }
+    },
+    {
+      "pair_id": "case-07-4",
+      "split": "dev",
+      "event_a": "case-07-a",
+      "event_b": "case-07-b",
+      "label": "different",
+      "category": "same_actor_different_event",
+      "a": {
+        "candidate_id": "case-07-4-a",
+        "title": "The Enora court rules on a fictional river dispute",
+        "language": "en",
+        "published_at": "2026-11-23T10:00:00Z"
+      },
+      "b": {
+        "candidate_id": "case-07-4-b",
+        "title": "Le tribunal d’Enora ouvre une audience électorale distincte",
+        "language": "fr",
+        "published_at": "2026-11-23T16:00:00Z"
+      }
+    },
+    {
+      "pair_id": "case-07-5",
+      "split": "dev",
+      "event_a": "case-07-a",
+      "event_b": "case-07-b",
+      "label": "different",
+      "category": "related_different_event",
+      "a": {
+        "candidate_id": "case-07-5-a",
+        "title": "Les autorités d’Enora font appel du jugement sur le litige fluvial",
+        "language": "fr",
+        "published_at": null
+      },
+      "b": {
+        "candidate_id": "case-07-5-b",
+        "title": "The Enora court begins a separate electoral hearing",
+        "language": "en",
+        "published_at": null
+      }
+    },
+    {
+      "pair_id": "case-08-1",
+      "split": "dev",
+      "event_a": "case-08-a",
+      "event_b": "case-08-a",
+      "label": "same_event",
+      "category": "same_crosslingual",
+      "a": {
+        "candidate_id": "case-08-1-a",
+        "title": "Feron and Gales sign an offshore wind treaty",
+        "language": "en",
+        "published_at": "2026-11-23T10:00:00Z"
+      },
+      "b": {
+        "candidate_id": "case-08-1-b",
+        "title": "Feron et Gales signent un traité éolien en mer",
+        "language": "fr",
+        "published_at": "2026-11-23T16:00:00Z"
+      }
+    },
+    {
+      "pair_id": "case-08-2",
+      "split": "dev",
+      "event_a": "case-08-a",
+      "event_b": "case-08-a",
+      "label": "same_event",
+      "category": "same_crosslingual",
+      "a": {
+        "candidate_id": "case-08-2-a",
+        "title": "Feron approves funding for the wind treaty with Gales",
+        "language": "en",
+        "published_at": "2026-11-23T10:00:00Z"
+      },
+      "b": {
+        "candidate_id": "case-08-2-b",
+        "title": "Feron approuve le financement du traité éolien avec Gales",
+        "language": "fr",
+        "published_at": "2026-11-23T16:00:00Z"
+      }
+    },
+    {
+      "pair_id": "case-08-3",
+      "split": "dev",
+      "event_a": "case-08-a",
+      "event_b": "case-08-a",
+      "label": "substantive_update",
+      "category": "substantive_update",
+      "a": {
+        "candidate_id": "case-08-3-a",
+        "title": "Feron and Gales sign an offshore wind treaty",
+        "language": "en",
+        "published_at": "2026-11-23T10:00:00Z"
+      },
+      "b": {
+        "candidate_id": "case-08-3-b",
+        "title": "Feron approuve le financement du traité éolien avec Gales",
+        "language": "fr",
+        "published_at": "2026-11-23T16:00:00Z"
+      }
+    },
+    {
+      "pair_id": "case-08-4",
+      "split": "dev",
+      "event_a": "case-08-a",
+      "event_b": "case-08-b",
+      "label": "different",
+      "category": "same_actor_different_event",
+      "a": {
+        "candidate_id": "case-08-4-a",
+        "title": "Feron and Gales sign an offshore wind treaty",
+        "language": "en",
+        "published_at": "2026-11-23T10:00:00Z"
+      },
+      "b": {
+        "candidate_id": "case-08-4-b",
+        "title": "Feron et Gales négocient l’accès à la pêche",
+        "language": "fr",
+        "published_at": "2026-11-23T16:00:00Z"
+      }
+    },
+    {
+      "pair_id": "case-08-5",
+      "split": "dev",
+      "event_a": "case-08-a",
+      "event_b": "case-08-b",
+      "label": "different",
+      "category": "related_different_event",
+      "a": {
+        "candidate_id": "case-08-5-a",
+        "title": "Feron approuve le financement du traité éolien avec Gales",
+        "language": "fr",
+        "published_at": null
+      },
+      "b": {
+        "candidate_id": "case-08-5-b",
+        "title": "Feron and Gales negotiate fishing access",
+        "language": "en",
+        "published_at": null
+      }
+    },
+    {
+      "pair_id": "case-09-1",
+      "split": "dev",
+      "event_a": "case-09-a",
+      "event_b": "case-09-a",
+      "label": "same_event",
+      "category": "same_crosslingual",
+      "a": {
+        "candidate_id": "case-09-1-a",
+        "title": "The Helin health agency reports a fictional disease outbreak",
+        "language": "en",
+        "published_at": null
+      },
+      "b": {
+        "candidate_id": "case-09-1-b",
+        "title": "L’agence de santé d’Helin signale une épidémie fictive",
+        "language": "fr",
+        "published_at": null
+      }
+    },
+    {
+      "pair_id": "case-09-2",
+      "split": "dev",
+      "event_a": "case-09-a",
+      "event_b": "case-09-a",
+      "label": "same_event",
+      "category": "same_crosslingual",
+      "a": {
+        "candidate_id": "case-09-2-a",
+        "title": "Helin opens clinics after the reported outbreak",
+        "language": "en",
+        "published_at": "2026-11-23T10:00:00Z"
+      },
+      "b": {
+        "candidate_id": "case-09-2-b",
+        "title": "Helin ouvre des cliniques après l’épidémie signalée",
+        "language": "fr",
+        "published_at": "2026-11-23T16:00:00Z"
+      }
+    },
+    {
+      "pair_id": "case-09-3",
+      "split": "dev",
+      "event_a": "case-09-a",
+      "event_b": "case-09-a",
+      "label": "substantive_update",
+      "category": "substantive_update",
+      "a": {
+        "candidate_id": "case-09-3-a",
+        "title": "The Helin health agency reports a fictional disease outbreak",
+        "language": "en",
+        "published_at": "2026-11-23T10:00:00Z"
+      },
+      "b": {
+        "candidate_id": "case-09-3-b",
+        "title": "Helin ouvre des cliniques après l’épidémie signalée",
+        "language": "fr",
+        "published_at": "2026-11-23T16:00:00Z"
+      }
+    },
+    {
+      "pair_id": "case-09-4",
+      "split": "dev",
+      "event_a": "case-09-a",
+      "event_b": "case-09-b",
+      "label": "different",
+      "category": "same_actor_different_event",
+      "a": {
+        "candidate_id": "case-09-4-a",
+        "title": "The Helin health agency reports a fictional disease outbreak",
+        "language": "en",
+        "published_at": "2026-11-23T10:00:00Z"
+      },
+      "b": {
+        "candidate_id": "case-09-4-b",
+        "title": "L’agence de santé d’Helin publie des conseils de sécurité alimentaire",
+        "language": "fr",
+        "published_at": "2026-11-23T16:00:00Z"
+      }
+    },
+    {
+      "pair_id": "case-09-5",
+      "split": "dev",
+      "event_a": "case-09-a",
+      "event_b": "case-09-b",
+      "label": "different",
+      "category": "related_different_event",
+      "a": {
+        "candidate_id": "case-09-5-a",
+        "title": "Helin ouvre des cliniques après l’épidémie signalée",
+        "language": "fr",
+        "published_at": null
+      },
+      "b": {
+        "candidate_id": "case-09-5-b",
+        "title": "The Helin health agency issues food safety guidance",
+        "language": "en",
+        "published_at": null
+      }
+    },
+    {
+      "pair_id": "case-10-1",
+      "split": "dev",
+      "event_a": "case-10-a",
+      "event_b": "case-10-a",
+      "label": "same_event",
+      "category": "same_crosslingual",
+      "a": {
+        "candidate_id": "case-10-1-a",
+        "title": "Ivara launches a new national election timetable",
+        "language": "en",
+        "published_at": "2026-11-23T10:00:00Z"
+      },
+      "b": {
+        "candidate_id": "case-10-1-b",
+        "title": "Ivara annonce un nouveau calendrier électoral national",
+        "language": "fr",
+        "published_at": "2026-11-23T16:00:00Z"
+      }
+    },
+    {
+      "pair_id": "case-10-2",
+      "split": "dev",
+      "event_a": "case-10-a",
+      "event_b": "case-10-a",
+      "label": "same_event",
+      "category": "same_crosslingual",
+      "a": {
+        "candidate_id": "case-10-2-a",
+        "title": "Ivara election officials confirm registration dates",
+        "language": "en",
+        "published_at": "2026-11-23T10:00:00Z"
+      },
+      "b": {
+        "candidate_id": "case-10-2-b",
+        "title": "Les autorités électorales d’Ivara confirment les dates d’inscription",
+        "language": "fr",
+        "published_at": "2026-11-23T16:00:00Z"
+      }
+    },
+    {
+      "pair_id": "case-10-3",
+      "split": "dev",
+      "event_a": "case-10-a",
+      "event_b": "case-10-a",
+      "label": "substantive_update",
+      "category": "substantive_update",
+      "a": {
+        "candidate_id": "case-10-3-a",
+        "title": "Ivara launches a new national election timetable",
+        "language": "en",
+        "published_at": "2026-11-23T10:00:00Z"
+      },
+      "b": {
+        "candidate_id": "case-10-3-b",
+        "title": "Les autorités électorales d’Ivara confirment les dates d’inscription",
+        "language": "fr",
+        "published_at": "2026-11-23T16:00:00Z"
+      }
+    },
+    {
+      "pair_id": "case-10-4",
+      "split": "dev",
+      "event_a": "case-10-a",
+      "event_b": "case-10-b",
+      "label": "different",
+      "category": "same_actor_different_event",
+      "a": {
+        "candidate_id": "case-10-4-a",
+        "title": "Ivara launches a new national election timetable",
+        "language": "en",
+        "published_at": "2026-11-23T10:00:00Z"
+      },
+      "b": {
+        "candidate_id": "case-10-4-b",
+        "title": "Ivara approuve un budget indépendant pour l’éducation",
+        "language": "fr",
+        "published_at": "2026-11-23T16:00:00Z"
+      }
+    },
+    {
+      "pair_id": "case-10-5",
+      "split": "dev",
+      "event_a": "case-10-a",
+      "event_b": "case-10-b",
+      "label": "different",
+      "category": "related_different_event",
+      "a": {
+        "candidate_id": "case-10-5-a",
+        "title": "Les autorités électorales d’Ivara confirment les dates d’inscription",
+        "language": "fr",
+        "published_at": null
+      },
+      "b": {
+        "candidate_id": "case-10-5-b",
+        "title": "Ivara approves an independent education budget",
+        "language": "en",
+        "published_at": null
+      }
+    },
+    {
+      "pair_id": "case-11-1",
+      "split": "acceptance",
+      "event_a": "case-11-a",
+      "event_b": "case-11-a",
+      "label": "same_event",
+      "category": "same_crosslingual",
+      "a": {
+        "candidate_id": "case-11-1-a",
+        "title": "Jalen and Kora announce a fictional ceasefire",
+        "language": "en",
+        "published_at": null
+      },
+      "b": {
+        "candidate_id": "case-11-1-b",
+        "title": "Jalen et Kora annoncent un cessez-le-feu fictif",
+        "language": "fr",
+        "published_at": null
+      }
+    },
+    {
+      "pair_id": "case-11-2",
+      "split": "acceptance",
+      "event_a": "case-11-a",
+      "event_b": "case-11-a",
+      "label": "same_event",
+      "category": "same_crosslingual",
+      "a": {
+        "candidate_id": "case-11-2-a",
+        "title": "Observers report the Jalen Kora ceasefire has begun",
+        "language": "en",
+        "published_at": "2026-11-23T10:00:00Z"
+      },
+      "b": {
+        "candidate_id": "case-11-2-b",
+        "title": "Des observateurs indiquent que le cessez-le-feu Jalen Kora a commencé",
+        "language": "fr",
+        "published_at": "2026-11-23T16:00:00Z"
+      }
+    },
+    {
+      "pair_id": "case-11-3",
+      "split": "acceptance",
+      "event_a": "case-11-a",
+      "event_b": "case-11-a",
+      "label": "substantive_update",
+      "category": "substantive_update",
+      "a": {
+        "candidate_id": "case-11-3-a",
+        "title": "Jalen and Kora announce a fictional ceasefire",
+        "language": "en",
+        "published_at": "2026-11-23T10:00:00Z"
+      },
+      "b": {
+        "candidate_id": "case-11-3-b",
+        "title": "Des observateurs indiquent que le cessez-le-feu Jalen Kora a commencé",
+        "language": "fr",
+        "published_at": "2026-11-23T16:00:00Z"
+      }
+    },
+    {
+      "pair_id": "case-11-4",
+      "split": "acceptance",
+      "event_a": "case-11-a",
+      "event_b": "case-11-b",
+      "label": "different",
+      "category": "same_actor_different_event",
+      "a": {
+        "candidate_id": "case-11-4-a",
+        "title": "Jalen and Kora announce a fictional ceasefire",
+        "language": "en",
+        "published_at": "2026-11-23T10:00:00Z"
+      },
+      "b": {
+        "candidate_id": "case-11-4-b",
+        "title": "Jalen annonce un nouveau programme de logement national",
+        "language": "fr",
+        "published_at": "2026-11-23T16:00:00Z"
+      }
+    },
+    {
+      "pair_id": "case-11-5",
+      "split": "acceptance",
+      "event_a": "case-11-a",
+      "event_b": "case-11-b",
+      "label": "different",
+      "category": "related_different_event",
+      "a": {
+        "candidate_id": "case-11-5-a",
+        "title": "Des observateurs indiquent que le cessez-le-feu Jalen Kora a commencé",
+        "language": "fr",
+        "published_at": null
+      },
+      "b": {
+        "candidate_id": "case-11-5-b",
+        "title": "Jalen announces a new domestic housing plan",
+        "language": "en",
+        "published_at": null
+      }
+    },
+    {
+      "pair_id": "case-12-1",
+      "split": "acceptance",
+      "event_a": "case-12-a",
+      "event_b": "case-12-a",
+      "label": "same_event",
+      "category": "same_crosslingual",
+      "a": {
+        "candidate_id": "case-12-1-a",
+        "title": "The Luma agency approves a regional vaccine",
+        "language": "en",
+        "published_at": "2026-11-23T10:00:00Z"
+      },
+      "b": {
+        "candidate_id": "case-12-1-b",
+        "title": "L’agence de Luma approuve un vaccin régional",
+        "language": "fr",
+        "published_at": "2026-11-23T16:00:00Z"
+      }
+    },
+    {
+      "pair_id": "case-12-2",
+      "split": "acceptance",
+      "event_a": "case-12-a",
+      "event_b": "case-12-a",
+      "label": "same_event",
+      "category": "same_crosslingual",
+      "a": {
+        "candidate_id": "case-12-2-a",
+        "title": "Luma begins distributing the newly approved vaccine",
+        "language": "en",
+        "published_at": "2026-11-23T10:00:00Z"
+      },
+      "b": {
+        "candidate_id": "case-12-2-b",
+        "title": "Luma commence à distribuer le vaccin récemment approuvé",
+        "language": "fr",
+        "published_at": "2026-11-23T16:00:00Z"
+      }
+    },
+    {
+      "pair_id": "case-12-3",
+      "split": "acceptance",
+      "event_a": "case-12-a",
+      "event_b": "case-12-a",
+      "label": "substantive_update",
+      "category": "substantive_update",
+      "a": {
+        "candidate_id": "case-12-3-a",
+        "title": "The Luma agency approves a regional vaccine",
+        "language": "en",
+        "published_at": "2026-11-23T10:00:00Z"
+      },
+      "b": {
+        "candidate_id": "case-12-3-b",
+        "title": "Luma commence à distribuer le vaccin récemment approuvé",
+        "language": "fr",
+        "published_at": "2026-11-23T16:00:00Z"
+      }
+    },
+    {
+      "pair_id": "case-12-4",
+      "split": "acceptance",
+      "event_a": "case-12-a",
+      "event_b": "case-12-b",
+      "label": "different",
+      "category": "same_actor_different_event",
+      "a": {
+        "candidate_id": "case-12-4-a",
+        "title": "The Luma agency approves a regional vaccine",
+        "language": "en",
+        "published_at": "2026-11-23T10:00:00Z"
+      },
+      "b": {
+        "candidate_id": "case-12-4-b",
+        "title": "Les scientifiques de Luma publient une étude sur la température des océans",
+        "language": "fr",
+        "published_at": "2026-11-23T16:00:00Z"
+      }
+    },
+    {
+      "pair_id": "case-12-5",
+      "split": "acceptance",
+      "event_a": "case-12-a",
+      "event_b": "case-12-b",
+      "label": "different",
+      "category": "related_different_event",
+      "a": {
+        "candidate_id": "case-12-5-a",
+        "title": "Luma commence à distribuer le vaccin récemment approuvé",
+        "language": "fr",
+        "published_at": null
+      },
+      "b": {
+        "candidate_id": "case-12-5-b",
+        "title": "Luma scientists release an ocean temperature study",
+        "language": "en",
+        "published_at": null
+      }
+    },
+    {
+      "pair_id": "case-13-1",
+      "split": "acceptance",
+      "event_a": "case-13-a",
+      "event_b": "case-13-a",
+      "label": "same_event",
+      "category": "same_crosslingual",
+      "a": {
+        "candidate_id": "case-13-1-a",
+        "title": "Meren and Nola sign a fictional trade agreement",
+        "language": "en",
+        "published_at": null
+      },
+      "b": {
+        "candidate_id": "case-13-1-b",
+        "title": "Meren et Nola signent un accord commercial fictif",
+        "language": "fr",
+        "published_at": null
+      }
+    },
+    {
+      "pair_id": "case-13-2",
+      "split": "acceptance",
+      "event_a": "case-13-a",
+      "event_b": "case-13-a",
+      "label": "same_event",
+      "category": "same_crosslingual",
+      "a": {
+        "candidate_id": "case-13-2-a",
+        "title": "Meren lawmakers ratify the trade agreement with Nola",
+        "language": "en",
+        "published_at": "2026-11-23T10:00:00Z"
+      },
+      "b": {
+        "candidate_id": "case-13-2-b",
+        "title": "Les députés de Meren ratifient l’accord commercial avec Nola",
+        "language": "fr",
+        "published_at": "2026-11-23T16:00:00Z"
+      }
+    },
+    {
+      "pair_id": "case-13-3",
+      "split": "acceptance",
+      "event_a": "case-13-a",
+      "event_b": "case-13-a",
+      "label": "substantive_update",
+      "category": "substantive_update",
+      "a": {
+        "candidate_id": "case-13-3-a",
+        "title": "Meren and Nola sign a fictional trade agreement",
+        "language": "en",
+        "published_at": "2026-11-23T10:00:00Z"
+      },
+      "b": {
+        "candidate_id": "case-13-3-b",
+        "title": "Les députés de Meren ratifient l’accord commercial avec Nola",
+        "language": "fr",
+        "published_at": "2026-11-23T16:00:00Z"
+      }
+    },
+    {
+      "pair_id": "case-13-4",
+      "split": "acceptance",
+      "event_a": "case-13-a",
+      "event_b": "case-13-b",
+      "label": "different",
+      "category": "same_actor_different_event",
+      "a": {
+        "candidate_id": "case-13-4-a",
+        "title": "Meren and Nola sign a fictional trade agreement",
+        "language": "en",
+        "published_at": "2026-11-23T10:00:00Z"
+      },
+      "b": {
+        "candidate_id": "case-13-4-b",
+        "title": "Nola présente une réforme distincte de l’éducation",
+        "language": "fr",
+        "published_at": "2026-11-23T16:00:00Z"
+      }
+    },
+    {
+      "pair_id": "case-13-5",
+      "split": "acceptance",
+      "event_a": "case-13-a",
+      "event_b": "case-13-b",
+      "label": "different",
+      "category": "related_different_event",
+      "a": {
+        "candidate_id": "case-13-5-a",
+        "title": "Les députés de Meren ratifient l’accord commercial avec Nola",
+        "language": "fr",
+        "published_at": null
+      },
+      "b": {
+        "candidate_id": "case-13-5-b",
+        "title": "Nola unveils a separate education reform",
+        "language": "en",
+        "published_at": null
+      }
+    },
+    {
+      "pair_id": "case-14-1",
+      "split": "acceptance",
+      "event_a": "case-14-a",
+      "event_b": "case-14-a",
+      "label": "same_event",
+      "category": "same_crosslingual",
+      "a": {
+        "candidate_id": "case-14-1-a",
+        "title": "The Orel volcano forces an island evacuation",
+        "language": "en",
+        "published_at": "2026-11-23T10:00:00Z"
+      },
+      "b": {
+        "candidate_id": "case-14-1-b",
+        "title": "Le volcan d’Orel impose l’évacuation d’une île",
+        "language": "fr",
+        "published_at": "2026-11-23T16:00:00Z"
+      }
+    },
+    {
+      "pair_id": "case-14-2",
+      "split": "acceptance",
+      "event_a": "case-14-a",
+      "event_b": "case-14-a",
+      "label": "same_event",
+      "category": "same_crosslingual",
+      "a": {
+        "candidate_id": "case-14-2-a",
+        "title": "Orel residents return after the volcano evacuation",
+        "language": "en",
+        "published_at": "2026-11-23T10:00:00Z"
+      },
+      "b": {
+        "candidate_id": "case-14-2-b",
+        "title": "Les habitants d’Orel rentrent après l’évacuation volcanique",
+        "language": "fr",
+        "published_at": "2026-11-23T16:00:00Z"
+      }
+    },
+    {
+      "pair_id": "case-14-3",
+      "split": "acceptance",
+      "event_a": "case-14-a",
+      "event_b": "case-14-a",
+      "label": "substantive_update",
+      "category": "substantive_update",
+      "a": {
+        "candidate_id": "case-14-3-a",
+        "title": "The Orel volcano forces an island evacuation",
+        "language": "en",
+        "published_at": "2026-11-23T10:00:00Z"
+      },
+      "b": {
+        "candidate_id": "case-14-3-b",
+        "title": "Les habitants d’Orel rentrent après l’évacuation volcanique",
+        "language": "fr",
+        "published_at": "2026-11-23T16:00:00Z"
+      }
+    },
+    {
+      "pair_id": "case-14-4",
+      "split": "acceptance",
+      "event_a": "case-14-a",
+      "event_b": "case-14-b",
+      "label": "different",
+      "category": "same_actor_different_event",
+      "a": {
+        "candidate_id": "case-14-4-a",
+        "title": "The Orel volcano forces an island evacuation",
+        "language": "en",
+        "published_at": "2026-11-23T10:00:00Z"
+      },
+      "b": {
+        "candidate_id": "case-14-4-b",
+        "title": "Orel ouvre un nouvel aéroport de passagers",
+        "language": "fr",
+        "published_at": "2026-11-23T16:00:00Z"
+      }
+    },
+    {
+      "pair_id": "case-14-5",
+      "split": "acceptance",
+      "event_a": "case-14-a",
+      "event_b": "case-14-b",
+      "label": "different",
+      "category": "related_different_event",
+      "a": {
+        "candidate_id": "case-14-5-a",
+        "title": "Les habitants d’Orel rentrent après l’évacuation volcanique",
+        "language": "fr",
+        "published_at": null
+      },
+      "b": {
+        "candidate_id": "case-14-5-b",
+        "title": "Orel opens a new passenger airport",
+        "language": "en",
+        "published_at": null
+      }
+    },
+    {
+      "pair_id": "case-15-1",
+      "split": "acceptance",
+      "event_a": "case-15-a",
+      "event_b": "case-15-a",
+      "label": "same_event",
+      "category": "same_crosslingual",
+      "a": {
+        "candidate_id": "case-15-1-a",
+        "title": "Pelar researchers reveal a new battery design",
+        "language": "en",
+        "published_at": null
+      },
+      "b": {
+        "candidate_id": "case-15-1-b",
+        "title": "Les chercheurs de Pelar dévoilent une nouvelle batterie",
+        "language": "fr",
+        "published_at": null
+      }
+    },
+    {
+      "pair_id": "case-15-2",
+      "split": "acceptance",
+      "event_a": "case-15-a",
+      "event_b": "case-15-a",
+      "label": "same_event",
+      "category": "same_crosslingual",
+      "a": {
+        "candidate_id": "case-15-2-a",
+        "title": "The Pelar battery design enters a first safety trial",
+        "language": "en",
+        "published_at": "2026-11-23T10:00:00Z"
+      },
+      "b": {
+        "candidate_id": "case-15-2-b",
+        "title": "La batterie de Pelar entre dans un premier essai de sécurité",
+        "language": "fr",
+        "published_at": "2026-11-23T16:00:00Z"
+      }
+    },
+    {
+      "pair_id": "case-15-3",
+      "split": "acceptance",
+      "event_a": "case-15-a",
+      "event_b": "case-15-a",
+      "label": "substantive_update",
+      "category": "substantive_update",
+      "a": {
+        "candidate_id": "case-15-3-a",
+        "title": "Pelar researchers reveal a new battery design",
+        "language": "en",
+        "published_at": "2026-11-23T10:00:00Z"
+      },
+      "b": {
+        "candidate_id": "case-15-3-b",
+        "title": "La batterie de Pelar entre dans un premier essai de sécurité",
+        "language": "fr",
+        "published_at": "2026-11-23T16:00:00Z"
+      }
+    },
+    {
+      "pair_id": "case-15-4",
+      "split": "acceptance",
+      "event_a": "case-15-a",
+      "event_b": "case-15-b",
+      "label": "different",
+      "category": "same_actor_different_event",
+      "a": {
+        "candidate_id": "case-15-4-a",
+        "title": "Pelar researchers reveal a new battery design",
+        "language": "en",
+        "published_at": "2026-11-23T10:00:00Z"
+      },
+      "b": {
+        "candidate_id": "case-15-4-b",
+        "title": "Les chercheurs de Pelar publient une étude sur les sols forestiers",
+        "language": "fr",
+        "published_at": "2026-11-23T16:00:00Z"
+      }
+    },
+    {
+      "pair_id": "case-15-5",
+      "split": "acceptance",
+      "event_a": "case-15-a",
+      "event_b": "case-15-b",
+      "label": "different",
+      "category": "related_different_event",
+      "a": {
+        "candidate_id": "case-15-5-a",
+        "title": "La batterie de Pelar entre dans un premier essai de sécurité",
+        "language": "fr",
+        "published_at": null
+      },
+      "b": {
+        "candidate_id": "case-15-5-b",
+        "title": "Pelar researchers publish a study on forest soils",
+        "language": "en",
+        "published_at": null
+      }
+    },
+    {
+      "pair_id": "case-16-1",
+      "split": "acceptance",
+      "event_a": "case-16-a",
+      "event_b": "case-16-a",
+      "label": "same_event",
+      "category": "same_crosslingual",
+      "a": {
+        "candidate_id": "case-16-1-a",
+        "title": "Quira and Rovan agree on a river conservation plan",
+        "language": "en",
+        "published_at": "2026-11-23T10:00:00Z"
+      },
+      "b": {
+        "candidate_id": "case-16-1-b",
+        "title": "Quira et Rovan conviennent d’un plan de protection du fleuve",
+        "language": "fr",
+        "published_at": "2026-11-23T16:00:00Z"
+      }
+    },
+    {
+      "pair_id": "case-16-2",
+      "split": "acceptance",
+      "event_a": "case-16-a",
+      "event_b": "case-16-a",
+      "label": "same_event",
+      "category": "same_crosslingual",
+      "a": {
+        "candidate_id": "case-16-2-a",
+        "title": "Quira allocates funds to the river plan with Rovan",
+        "language": "en",
+        "published_at": "2026-11-23T10:00:00Z"
+      },
+      "b": {
+        "candidate_id": "case-16-2-b",
+        "title": "Quira affecte des fonds au plan fluvial avec Rovan",
+        "language": "fr",
+        "published_at": "2026-11-23T16:00:00Z"
+      }
+    },
+    {
+      "pair_id": "case-16-3",
+      "split": "acceptance",
+      "event_a": "case-16-a",
+      "event_b": "case-16-a",
+      "label": "substantive_update",
+      "category": "substantive_update",
+      "a": {
+        "candidate_id": "case-16-3-a",
+        "title": "Quira and Rovan agree on a river conservation plan",
+        "language": "en",
+        "published_at": "2026-11-23T10:00:00Z"
+      },
+      "b": {
+        "candidate_id": "case-16-3-b",
+        "title": "Quira affecte des fonds au plan fluvial avec Rovan",
+        "language": "fr",
+        "published_at": "2026-11-23T16:00:00Z"
+      }
+    },
+    {
+      "pair_id": "case-16-4",
+      "split": "acceptance",
+      "event_a": "case-16-a",
+      "event_b": "case-16-b",
+      "label": "different",
+      "category": "same_actor_different_event",
+      "a": {
+        "candidate_id": "case-16-4-a",
+        "title": "Quira and Rovan agree on a river conservation plan",
+        "language": "en",
+        "published_at": "2026-11-23T10:00:00Z"
+      },
+      "b": {
+        "candidate_id": "case-16-4-b",
+        "title": "Rovan annonce une mission spatiale distincte",
+        "language": "fr",
+        "published_at": "2026-11-23T16:00:00Z"
+      }
+    },
+    {
+      "pair_id": "case-16-5",
+      "split": "acceptance",
+      "event_a": "case-16-a",
+      "event_b": "case-16-b",
+      "label": "different",
+      "category": "related_different_event",
+      "a": {
+        "candidate_id": "case-16-5-a",
+        "title": "Quira affecte des fonds au plan fluvial avec Rovan",
+        "language": "fr",
+        "published_at": null
+      },
+      "b": {
+        "candidate_id": "case-16-5-b",
+        "title": "Rovan announces a separate space mission",
+        "language": "en",
+        "published_at": null
+      }
+    },
+    {
+      "pair_id": "case-17-1",
+      "split": "acceptance",
+      "event_a": "case-17-a",
+      "event_b": "case-17-a",
+      "label": "same_event",
+      "category": "same_crosslingual",
+      "a": {
+        "candidate_id": "case-17-1-a",
+        "title": "The Sola parliament approves a clean energy bill",
+        "language": "en",
+        "published_at": null
+      },
+      "b": {
+        "candidate_id": "case-17-1-b",
+        "title": "Le parlement de Sola approuve une loi sur l’énergie propre",
+        "language": "fr",
+        "published_at": null
+      }
+    },
+    {
+      "pair_id": "case-17-2",
+      "split": "acceptance",
+      "event_a": "case-17-a",
+      "event_b": "case-17-a",
+      "label": "same_event",
+      "category": "same_crosslingual",
+      "a": {
+        "candidate_id": "case-17-2-a",
+        "title": "The Sola president signs the clean energy bill",
+        "language": "en",
+        "published_at": "2026-11-23T10:00:00Z"
+      },
+      "b": {
+        "candidate_id": "case-17-2-b",
+        "title": "La présidente de Sola signe la loi sur l’énergie propre",
+        "language": "fr",
+        "published_at": "2026-11-23T16:00:00Z"
+      }
+    },
+    {
+      "pair_id": "case-17-3",
+      "split": "acceptance",
+      "event_a": "case-17-a",
+      "event_b": "case-17-a",
+      "label": "substantive_update",
+      "category": "substantive_update",
+      "a": {
+        "candidate_id": "case-17-3-a",
+        "title": "The Sola parliament approves a clean energy bill",
+        "language": "en",
+        "published_at": "2026-11-23T10:00:00Z"
+      },
+      "b": {
+        "candidate_id": "case-17-3-b",
+        "title": "La présidente de Sola signe la loi sur l’énergie propre",
+        "language": "fr",
+        "published_at": "2026-11-23T16:00:00Z"
+      }
+    },
+    {
+      "pair_id": "case-17-4",
+      "split": "acceptance",
+      "event_a": "case-17-a",
+      "event_b": "case-17-b",
+      "label": "different",
+      "category": "same_actor_different_event",
+      "a": {
+        "candidate_id": "case-17-4-a",
+        "title": "The Sola parliament approves a clean energy bill",
+        "language": "en",
+        "published_at": "2026-11-23T10:00:00Z"
+      },
+      "b": {
+        "candidate_id": "case-17-4-b",
+        "title": "Le parlement de Sola débat du financement des bibliothèques",
+        "language": "fr",
+        "published_at": "2026-11-23T16:00:00Z"
+      }
+    },
+    {
+      "pair_id": "case-17-5",
+      "split": "acceptance",
+      "event_a": "case-17-a",
+      "event_b": "case-17-b",
+      "label": "different",
+      "category": "related_different_event",
+      "a": {
+        "candidate_id": "case-17-5-a",
+        "title": "La présidente de Sola signe la loi sur l’énergie propre",
+        "language": "fr",
+        "published_at": null
+      },
+      "b": {
+        "candidate_id": "case-17-5-b",
+        "title": "The Sola parliament debates public library funding",
+        "language": "en",
+        "published_at": null
+      }
+    },
+    {
+      "pair_id": "case-18-1",
+      "split": "acceptance",
+      "event_a": "case-18-a",
+      "event_b": "case-18-a",
+      "label": "same_event",
+      "category": "same_crosslingual",
+      "a": {
+        "candidate_id": "case-18-1-a",
+        "title": "Tarin officials confirm a cyberattack on a port",
+        "language": "en",
+        "published_at": "2026-11-23T10:00:00Z"
+      },
+      "b": {
+        "candidate_id": "case-18-1-b",
+        "title": "Les autorités de Tarin confirment une cyberattaque contre un port",
+        "language": "fr",
+        "published_at": "2026-11-23T16:00:00Z"
+      }
+    },
+    {
+      "pair_id": "case-18-2",
+      "split": "acceptance",
+      "event_a": "case-18-a",
+      "event_b": "case-18-a",
+      "label": "same_event",
+      "category": "same_crosslingual",
+      "a": {
+        "candidate_id": "case-18-2-a",
+        "title": "Tarin restores port systems after the cyberattack",
+        "language": "en",
+        "published_at": "2026-11-23T10:00:00Z"
+      },
+      "b": {
+        "candidate_id": "case-18-2-b",
+        "title": "Tarin rétablit les systèmes portuaires après la cyberattaque",
+        "language": "fr",
+        "published_at": "2026-11-23T16:00:00Z"
+      }
+    },
+    {
+      "pair_id": "case-18-3",
+      "split": "acceptance",
+      "event_a": "case-18-a",
+      "event_b": "case-18-a",
+      "label": "substantive_update",
+      "category": "substantive_update",
+      "a": {
+        "candidate_id": "case-18-3-a",
+        "title": "Tarin officials confirm a cyberattack on a port",
+        "language": "en",
+        "published_at": "2026-11-23T10:00:00Z"
+      },
+      "b": {
+        "candidate_id": "case-18-3-b",
+        "title": "Tarin rétablit les systèmes portuaires après la cyberattaque",
+        "language": "fr",
+        "published_at": "2026-11-23T16:00:00Z"
+      }
+    },
+    {
+      "pair_id": "case-18-4",
+      "split": "acceptance",
+      "event_a": "case-18-a",
+      "event_b": "case-18-b",
+      "label": "different",
+      "category": "same_actor_different_event",
+      "a": {
+        "candidate_id": "case-18-4-a",
+        "title": "Tarin officials confirm a cyberattack on a port",
+        "language": "en",
+        "published_at": "2026-11-23T10:00:00Z"
+      },
+      "b": {
+        "candidate_id": "case-18-4-b",
+        "title": "Tarin confirme une cyberattaque distincte contre un hôpital",
+        "language": "fr",
+        "published_at": "2026-11-23T16:00:00Z"
+      }
+    },
+    {
+      "pair_id": "case-18-5",
+      "split": "acceptance",
+      "event_a": "case-18-a",
+      "event_b": "case-18-b",
+      "label": "different",
+      "category": "related_different_event",
+      "a": {
+        "candidate_id": "case-18-5-a",
+        "title": "Tarin rétablit les systèmes portuaires après la cyberattaque",
+        "language": "fr",
+        "published_at": null
+      },
+      "b": {
+        "candidate_id": "case-18-5-b",
+        "title": "Tarin confirms a separate cyberattack on a hospital",
+        "language": "en",
+        "published_at": null
+      }
+    },
+    {
+      "pair_id": "case-19-1",
+      "split": "acceptance",
+      "event_a": "case-19-a",
+      "event_b": "case-19-a",
+      "label": "same_event",
+      "category": "same_crosslingual",
+      "a": {
+        "candidate_id": "case-19-1-a",
+        "title": "The Uven summit adopts a fictional climate declaration",
+        "language": "en",
+        "published_at": null
+      },
+      "b": {
+        "candidate_id": "case-19-1-b",
+        "title": "Le sommet d’Uven adopte une déclaration climatique fictive",
+        "language": "fr",
+        "published_at": null
+      }
+    },
+    {
+      "pair_id": "case-19-2",
+      "split": "acceptance",
+      "event_a": "case-19-a",
+      "event_b": "case-19-a",
+      "label": "same_event",
+      "category": "same_crosslingual",
+      "a": {
+        "candidate_id": "case-19-2-a",
+        "title": "Uven delegates publish the climate declaration text",
+        "language": "en",
+        "published_at": "2026-11-23T10:00:00Z"
+      },
+      "b": {
+        "candidate_id": "case-19-2-b",
+        "title": "Les délégués d’Uven publient le texte de la déclaration climatique",
+        "language": "fr",
+        "published_at": "2026-11-23T16:00:00Z"
+      }
+    },
+    {
+      "pair_id": "case-19-3",
+      "split": "acceptance",
+      "event_a": "case-19-a",
+      "event_b": "case-19-a",
+      "label": "substantive_update",
+      "category": "substantive_update",
+      "a": {
+        "candidate_id": "case-19-3-a",
+        "title": "The Uven summit adopts a fictional climate declaration",
+        "language": "en",
+        "published_at": "2026-11-23T10:00:00Z"
+      },
+      "b": {
+        "candidate_id": "case-19-3-b",
+        "title": "Les délégués d’Uven publient le texte de la déclaration climatique",
+        "language": "fr",
+        "published_at": "2026-11-23T16:00:00Z"
+      }
+    },
+    {
+      "pair_id": "case-19-4",
+      "split": "acceptance",
+      "event_a": "case-19-a",
+      "event_b": "case-19-b",
+      "label": "different",
+      "category": "same_actor_different_event",
+      "a": {
+        "candidate_id": "case-19-4-a",
+        "title": "The Uven summit adopts a fictional climate declaration",
+        "language": "en",
+        "published_at": "2026-11-23T10:00:00Z"
+      },
+      "b": {
+        "candidate_id": "case-19-4-b",
+        "title": "Uven accueille un festival international de musique sans rapport",
+        "language": "fr",
+        "published_at": "2026-11-23T16:00:00Z"
+      }
+    },
+    {
+      "pair_id": "case-19-5",
+      "split": "acceptance",
+      "event_a": "case-19-a",
+      "event_b": "case-19-b",
+      "label": "different",
+      "category": "related_different_event",
+      "a": {
+        "candidate_id": "case-19-5-a",
+        "title": "Les délégués d’Uven publient le texte de la déclaration climatique",
+        "language": "fr",
+        "published_at": null
+      },
+      "b": {
+        "candidate_id": "case-19-5-b",
+        "title": "Uven hosts an unrelated international music festival",
+        "language": "en",
+        "published_at": null
+      }
+    },
+    {
+      "pair_id": "case-20-1",
+      "split": "acceptance",
+      "event_a": "case-20-a",
+      "event_b": "case-20-a",
+      "label": "same_event",
+      "category": "same_crosslingual",
+      "a": {
+        "candidate_id": "case-20-1-a",
+        "title": "Vela and Woren announce a new maritime safety pact",
+        "language": "en",
+        "published_at": "2026-11-23T10:00:00Z"
+      },
+      "b": {
+        "candidate_id": "case-20-1-b",
+        "title": "Vela et Woren annoncent un nouvel accord de sécurité maritime",
+        "language": "fr",
+        "published_at": "2026-11-23T16:00:00Z"
+      }
+    },
+    {
+      "pair_id": "case-20-2",
+      "split": "acceptance",
+      "event_a": "case-20-a",
+      "event_b": "case-20-a",
+      "label": "same_event",
+      "category": "same_crosslingual",
+      "a": {
+        "candidate_id": "case-20-2-a",
+        "title": "Vela ratifies the maritime safety pact with Woren",
+        "language": "en",
+        "published_at": "2026-11-23T10:00:00Z"
+      },
+      "b": {
+        "candidate_id": "case-20-2-b",
+        "title": "Vela ratifie l’accord de sécurité maritime avec Woren",
+        "language": "fr",
+        "published_at": "2026-11-23T16:00:00Z"
+      }
+    },
+    {
+      "pair_id": "case-20-3",
+      "split": "acceptance",
+      "event_a": "case-20-a",
+      "event_b": "case-20-a",
+      "label": "substantive_update",
+      "category": "substantive_update",
+      "a": {
+        "candidate_id": "case-20-3-a",
+        "title": "Vela and Woren announce a new maritime safety pact",
+        "language": "en",
+        "published_at": "2026-11-23T10:00:00Z"
+      },
+      "b": {
+        "candidate_id": "case-20-3-b",
+        "title": "Vela ratifie l’accord de sécurité maritime avec Woren",
+        "language": "fr",
+        "published_at": "2026-11-23T16:00:00Z"
+      }
+    },
+    {
+      "pair_id": "case-20-4",
+      "split": "acceptance",
+      "event_a": "case-20-a",
+      "event_b": "case-20-b",
+      "label": "different",
+      "category": "same_actor_different_event",
+      "a": {
+        "candidate_id": "case-20-4-a",
+        "title": "Vela and Woren announce a new maritime safety pact",
+        "language": "en",
+        "published_at": "2026-11-23T10:00:00Z"
+      },
+      "b": {
+        "candidate_id": "case-20-4-b",
+        "title": "Woren annonce une réforme agricole distincte",
+        "language": "fr",
+        "published_at": "2026-11-23T16:00:00Z"
+      }
+    },
+    {
+      "pair_id": "case-20-5",
+      "split": "acceptance",
+      "event_a": "case-20-a",
+      "event_b": "case-20-b",
+      "label": "different",
+      "category": "related_different_event",
+      "a": {
+        "candidate_id": "case-20-5-a",
+        "title": "Vela ratifie l’accord de sécurité maritime avec Woren",
+        "language": "fr",
+        "published_at": null
+      },
+      "b": {
+        "candidate_id": "case-20-5-b",
+        "title": "Woren announces a separate agricultural reform",
+        "language": "en",
+        "published_at": null
+      }
+    }
+  ]
+}

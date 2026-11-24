@@ -146,3 +146,18 @@ def test_reviewer_failure_abstains_without_exposing_error():
     def failed(*args): raise RuntimeError('private provider text')
     result = compare(a, b, [1., 0.], [1., 0.], NOW, .9, failed)
     assert result['relation'] == 'unknown' and 'private provider text' not in str(result)
+
+
+def test_synthetic_substantive_update_can_survive_representative_failure():
+    original = candidate('a', 'Neptune Benghazi vessel attack', excerpt='Original longer RSS excerpt')
+    update = candidate('b', 'Attaque Neptune Benghazi mise à jour', language='fr', excerpt='new')
+    facts = {'a': [{'id': 'update-fact', 'description': 'Synthetic substantive update'}]}
+    def importance(group, supplied):
+        return {'level': 'A', 'uncertainty': 'low', 'evidence_ids': ['b'],
+                'fact_ids': [fact['id'] for fact in supplied]}
+    def verify(c): return 'failed' if c['candidate_id'] == 'a' else 'full_text'
+    result = run([original, update], NOW.isoformat(), FakeEncoder(), .9, importance, verify, facts_by_event=facts)
+    assert result['selected'] == ['b']
+    assert result['quality'] == {'a': 'failed', 'b': 'full_text'}
+    assert result['editorial_diagnostics'][0]['fact_ids'] == ['update-fact']
+    # Group-level fact IDs are supplied evidence, not proof that the selected text contains them.

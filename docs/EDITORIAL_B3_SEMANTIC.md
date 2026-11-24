@@ -2,9 +2,9 @@
 
 ## 当前状态
 
-**尚未完成真实模型实验，不可据此宣称 B3 改善或通过验收。** 2026-11-24，本环境对官方 Hugging Face 模型 `config.json` 请求返回 HTTP 403，环境没有 E5 权重缓存，也没有 PyTorch/Transformers；没有绕过访问限制。原来的 [B3-heuristic 与 CrossNews-UA 结果](EDITORIAL_B3_EXPERIMENT.md) 保留：原 213 个跨语言代理标签对全部弃判，F1 0。此 PR 的测试替身仅检验代码契约，并非模型运行结果。
+[真实 CPU E5 冒烟测试 run 45345874515](https://github.com/MVVVVK/OughtGather/actions/runs/45345874515) 的 job 已成功。用户提供的 Artifact 数值保存在 [聚合记录](data/e5_smoke_45345874515.json)：模型文件 492,794,646 bytes，下载 3.467 秒、加载 3.084 秒、四标题推理 0.032 秒，峰值 RSS 888,968 KiB；虚构同事件跨语言对平均余弦 0.926006，不同事件对平均 0.839302。仅四条标题不能确定阈值、事件准确率或生产效果；本会话核对了 job 成功状态，数值来自用户提供的 Artifact 摘要，未独立读取 Artifact 内容。
 
-[官方模型卡](https://huggingface.co/intfloat/multilingual-e5-small) 标注 MIT 许可；固定 revision `fd1525a9fd15316a2d503bf26ab031a61d056e98`，12 层、384 维。官方文件列表标注 safetensors 约 471 MB，tokenizer 文件等需额外空间；这是远端标称，不是本机已下载体积。实际 CPU 推理时间、内存、模型性能及失败样本目前**未知**。编码遵循模型卡：每条前缀 `query: `、512 token 截断、attention-mask 均值池化、L2 归一化，余弦相似度。`E5Encoder` 默认 `local_files_only=True`，不会自动联网下载。
+[官方模型卡](https://huggingface.co/intfloat/multilingual-e5-small) 标注 MIT 许可；固定 revision `fd1525a9fd15316a2d503bf26ab031a61d056e98`，12 层、384 维。编码遵循模型卡：每条前缀 `query: `、512 token 截断、attention-mask 均值池化、L2 归一化，余弦相似度。`E5Encoder` 默认 `local_files_only=True`，不会自动联网下载。
 
 ## 已实现的可替换接口
 
@@ -13,9 +13,9 @@
 - `semantic.deepseek.DeepSeekEditorial` 适配现有 Responses 客户端与 `Budget`，提供关系复核和 A/B/C/D 重要性接口；默认不能调用，须显式 `allow_external=True`，并逐候选及逐事实提供许可集合。输入只含获准标题/摘要和简短 ID；输出严格验证等级、候选证据 ID、事实 ID 和不确定性，不使用 tools、thinking 或原始输出作为结果。mock transport 测试没有调用真实 API；未获得授权不得发送私人来源或阅读记录。
 - `semantic.editor.run` 注入 encoder、重要性评估器及正文验证器；默认最多 40 次验证器调用，失败尝试下一篇，无法验证则可少于 16 篇。预算限制的是**接口调用次数**；验证器必须自行约束其内部 HTTP 请求、时间和访问权限，不能绕过付费墙或验证码。未知/高不确定性不伪装为重要性已确认。已提供的事实 ID 可参与未覆盖事实的边际选择；它们必须在选稿前独立建立并获授权，不能用 gold 或 B0 后验结果泄漏。类别关键词不再驱动该选择。
 
-这些接口不接入正式选稿，实验必须由调用者显式传入评估器、验证器和阈值。DeepSeek 真实重要性实验与本地 E5 语义实验分别统计；目前两者均**没有真实调用结果**。
+这些接口不接入正式选稿，实验必须由调用者显式传入评估器、验证器和阈值。DeepSeek 真实重要性实验与本地 E5 语义实验分别统计；DeepSeek 重要性接口仅有离线模拟验证，没有真实调用结果。
 
-## 已准备但尚未运行的真实数据实验
+## 真实新闻数据实验的边界（未运行）
 
 `scripts.editorial_v2.semantic.crossnews` 接受与既有实验相同的 CrossNews-UA CSV 并核对固定 SHA-256；不下载数据、不输出正文或 URL。模型及依赖准备就绪后可在私有实验环境运行：
 
@@ -40,3 +40,16 @@ PR #13 的现有 **CI** 工作流增加 `b3-e5-experiment` job，只在手动 `w
 在 GitHub Actions 页面选择 **CI** → **Run workflow**，分支选择 **`codex/editorial-b3-hybrid`** 并运行。检查 `b3-e5-experiment` job，下载 `b3-e5-aggregate` Artifact 中的 `b3-e5-report.json`；该文件仅包含阶段状态和聚合指标。`failure_stage=dependencies`、`model_download`、`model_load` 或 `synthetic_inference` 指出失败阶段；若官方返回 HTTP 403，记录状态后停止，不使用镜像或绕过限制。成功报告记录实际下载文件字节总数、加载及四条自行编写英法标题的推理时间、384 维向量范数范围和进程峰值 RSS。合成句子的相似度均值只验证真实推理，不是新闻事件准确率。
 
 CrossNews-UA 数据卡声明 CC BY 4.0，但 CSV 包含第三方新闻全文，原文可否由本项目进行处理尚未独立确认。因此该 job **不下载或处理 CrossNews-UA**，在报告中标为 `skipped_license_unconfirmed`。获得明确许可并完成原文权限核验前，不运行数据实验；当前没有真实模型的 precision、recall、F1、Average Precision、弃判率或失败案例。此前的 CrossNews-UA 规则结果与代码入口仍保留，不将合成句子当作模型在新闻数据上的评测。
+
+
+## 100 对合成验证与 300 候选性能测试
+
+新增 [100 对自行编写的完全虚构标题](../tests/fixtures/editorial_v2/synthetic_event_pairs_100.json)，不含真实新闻或第三方文本；覆盖英法同事件、同一主体不同事件、实质更新、相近但不同事件及缺失时间。固定 SHA-256 `5505ad7f214ea70155afeb8c8a2a39353e99894985abae911c059c16e65ffd6c`；50 对开发、50 对验收按虚构事件分离，程序校验事件和标题无交叉。相同事件及其实质更新算事件正例，但合并成功不代表选中的文章包含所有新增事实。
+
+现有手动 CI 会先对开发集从预注册的 0.50–0.95 网格按 F1 选阈值（同分取高值），再仅用该阈值计算冻结验收集的 B2、B3-heuristic、原始 E5 和辅助证据混合方法；报告每项 TP、FP、FN、TN、precision、recall、F1、Average Precision、弃判、无日期、同主体不同事件、相关不同事件及更新子集。不能据验收集结果反复调参。
+
+随后使用**同一真实 E5 实例**运行 300 条虚构候选的端到端选稿，记录 CPU 耗时、进程峰值内存、观察数量、聚类规模、最多 16 篇、验证次数上限及备用文章情况。重要性和正文验证器为预设合成回调，绝非真实 DeepSeek 或正文抓取；这验证控制流，不证明内容判断。算法基于组级事实 ID，尚不能证明最终代表文章包含所有声明事实，不能将更新保留能力宣称为已验证事实。
+
+### 当前上线阻碍与最小试运行
+
+真实 E5 只完成四标题冒烟；100 对和 300 条结果需要再次手动运行 CI 取得。在没有真实授权新闻、可复核事件与事实标签、实际正文验证及独立人工确认前，合成结果不能作为正式出版依据。最小试运行只在用户授权后，以只读 Shadow 对少量已授权候选运行，保留正式出版及去重，设有限调用与验证预算，人工检查误合并、遗漏、事实承载和代表质量；失败则仅停止 Shadow，不做自动切换。

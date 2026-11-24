@@ -42,7 +42,12 @@ def _status(exc):
     return None
 
 
-def run(report_path='b3-e5-report.json', *, downloader=_download, encoder_factory=_encoder):
+def _benchmark(model):
+    from .synthetic_validation import run
+    return run(model)
+
+
+def run(report_path='b3-e5-report.json', *, downloader=_download, encoder_factory=_encoder, benchmark_runner=_benchmark):
     report = {'status': 'failed', 'failure_stage': 'model_download', 'http_status': None,
               'model': MODEL, 'revision': REVISION, 'data_experiment': 'skipped_license_unconfirmed',
               'data_reason': 'Publisher rights for source articles have not been independently confirmed.'}
@@ -67,12 +72,16 @@ def run(report_path='b3-e5-report.json', *, downloader=_download, encoder_factor
         if any(not math.isfinite(n) or abs(n - 1.0) > 1e-4 for n in norms): raise ValueError('invalid normalization')
         def dot(a, b): return sum(x*y for x, y in zip(vectors[a], vectors[b]))
         torch_module = getattr(model, 'torch', None)
-        report.update(status='ok', failure_stage=None, dimensions=384, title_count=len(TITLES),
+        report.update(smoke_status='ok', failure_stage='synthetic_validation', dimensions=384, title_count=len(TITLES),
                       device='cpu', max_tokens=512, prefix='query:', pooling='attention_mask_mean_l2',
                       torch_version=str(torch_module.__version__) if torch_module is not None else None,
                       norm_min=round(min(norms), 6), norm_max=round(max(norms), 6),
                       paired_mean_cosine=round((dot(0, 1) + dot(2, 3)) / 2, 6),
                       unrelated_mean_cosine=round((dot(0, 2) + dot(1, 3)) / 2, 6),
+                      peak_rss_kib=resource.getrusage(resource.RUSAGE_SELF).ru_maxrss)
+        _write(report_path, report)
+        report['synthetic_validation'] = benchmark_runner(model)
+        report.update(status='ok', failure_stage=None,
                       peak_rss_kib=resource.getrusage(resource.RUSAGE_SELF).ru_maxrss)
         _write(report_path, report)
         return True
