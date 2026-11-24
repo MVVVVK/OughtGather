@@ -1,5 +1,6 @@
 import re
 import unicodedata
+from datetime import datetime, timezone
 from zipfile import ZIP_STORED, ZipFile
 from xml.etree import ElementTree as ET
 
@@ -21,6 +22,8 @@ def test_language_precedence_and_unknown():
 
 def test_epub_font_opt_in_and_text_parity(tmp_path, monkeypatch):
     monkeypatch.setenv("EPUB_LANGUAGE", "zh-CN")
+    # The two builds can cross a wall-clock second in CI; only compare typography.
+    monkeypatch.setattr("src.epub.generator.get_now", lambda: datetime(2026, 1, 1, tzinfo=timezone.utc))
     font_dir = tmp_path / "font-pack"
     font_dir.mkdir()
     (font_dir / "OFL.txt").write_text("Test license", encoding="utf-8")

@@ -18,9 +18,9 @@ def _require(condition, message):
         raise ValueError(message)
 
 
-def validate(snapshot):
+def validate(snapshot, allow_private=False):
     _require(isinstance(snapshot, dict) and snapshot.get('schema_version') == 1, 'invalid schema version')
-    _require(snapshot.get('data_class') in DATA_CLASSES, 'only synthetic or approved public data allowed')
+    _require(snapshot.get('data_class') in DATA_CLASSES or (allow_private and snapshot.get('data_class') == 'private'), 'data not permitted')
     try:
         cutoff = datetime.fromisoformat(snapshot['captured_at'].replace('Z', '+00:00'))
         _require(cutoff.tzinfo is not None and cutoff.utcoffset() is not None, 'capture cutoff requires timezone')
@@ -31,7 +31,7 @@ def validate(snapshot):
     ids = set()
     fields = {'candidate_id', 'source', 'language', 'published_at', 'title', 'excerpt', 'excerpt_permitted', 'media_type', 'media_evidence'}
     for c in candidates:
-        _require(isinstance(c, dict) and fields <= set(c) <= fields | {'url'}, 'invalid candidate fields')
+        _require(isinstance(c, dict) and fields <= set(c) <= fields | {'url', 'collected_at'}, 'invalid candidate fields')
         cid = c.get('candidate_id')
         _require(isinstance(cid, str) and cid and cid not in ids, 'missing or duplicate candidate id')
         ids.add(cid)
@@ -43,22 +43,25 @@ def validate(snapshot):
         _require(c.get('excerpt') is None or isinstance(c['excerpt'], str), 'invalid excerpt')
         _require(type(c.get('excerpt_permitted')) is bool, 'excerpt permission required')
         _require(c['excerpt_permitted'] or c.get('excerpt') is None, 'unpermitted excerpt')
-        date = c.get('published_at')
-        if date is not None:
-            try:
-                parsed = datetime.fromisoformat(date.replace('Z', '+00:00'))
-                _require(parsed.tzinfo is not None and parsed.utcoffset() is not None, 'date requires timezone')
-            except (ValueError, TypeError, AttributeError):
-                raise ValueError('invalid published_at') from None
+        for date in (c.get('published_at'), c.get('collected_at')):
+            if date is not None:
+                try:
+                    parsed = datetime.fromisoformat(date.replace('Z', '+00:00'))
+                    _require(parsed.tzinfo is not None and parsed.utcoffset() is not None, 'date requires timezone')
+                except (ValueError, TypeError, AttributeError):
+                    raise ValueError('invalid date') from None
+        if c.get('collected_at'):
+            _require(datetime.fromisoformat(c['collected_at'].replace('Z', '+00:00')) <= cutoff, 'candidate after cutoff')
     gold = snapshot.get('gold')
     _require(isinstance(gold, dict) and set(gold) <= ids, 'invalid gold labels')
     importance = {}
     for label in gold.values():
         _require(isinstance(label, dict) and isinstance(label.get('event_id'), str)
-                 and bool(label['event_id']) and type(label.get('important')) is bool, 'invalid event label')
+                 and bool(label['event_id']) and (type(label.get('important')) is bool or label.get('important') is None), 'invalid event label')
         event, important = label['event_id'], label['important']
-        _require(event not in importance or importance[event] == important, 'inconsistent event importance')
-        importance[event] = important
+        if important is not None:
+            _require(event not in importance or importance[event] == important, 'inconsistent event importance')
+            importance[event] = important
     novelty = snapshot.get('incremental_labels', {})
     _require(isinstance(novelty, dict) and set(novelty) <= ids, 'invalid incremental labels')
     for cid, comparisons in novelty.items():
@@ -72,7 +75,7 @@ def validate(snapshot):
 
 
 def validate_result(result, ids):
-    _require(isinstance(result, dict) and result.get('status') in {'ok', 'partial', 'failed'}, 'invalid result status')
+    _require(isinstance(result, dict) and result.get('status') in {'ok', 'partial', 'failed', 'not_run'}, 'invalid result status')
     observed = result.get('observed_ids')
     _require(isinstance(observed, list) and all(isinstance(x, str) for x in observed)
              and len(set(observed)) == len(observed) and set(observed) <= ids, 'invalid coverage')
@@ -88,7 +91,7 @@ def validate_result(result, ids):
         flat = [x for group in clusters for x in group]
         _require(all(isinstance(x, str) for x in flat) and len(flat) == len(set(flat))
                  and set(flat) == observed, 'clusters must partition observed candidates')
-    if result['status'] == 'failed':
+    if result['status'] in ('failed', 'not_run'):
         _require(not selected and clusters is None, 'failed result cannot claim selection or clusters')
     quality = result.get('quality', {})
     _require(isinstance(quality, dict) and set(quality) <= observed and all(v in QUALITY for v in quality.values()), 'invalid result quality')
@@ -107,9 +110,9 @@ def evaluate(snapshot, result):
     gold = snapshot['gold']
     observed = set(result['observed_ids'])
     selected = result['selected']
-    success = result['status'] != 'failed'
+    success = result['status'] not in ('failed', 'not_run')
     selected_events = [gold[x]['event_id'] for x in selected if x in gold]
-    important = {v['event_id'] for v in gold.values() if v['important']}
+    important = {v['event_id'] for v in gold.values() if v['important'] is True}
     covered = important & set(selected_events)
     sizes = {}
     for v in gold.values():
@@ -165,9 +168,9 @@ def evaluate(snapshot, result):
             'input_tokens': result.get('input_tokens'), 'output_tokens': result.get('output_tokens')}
 
 
-def replay(snapshot, engines, ordering='original'):
+def replay(snapshot, engines, ordering='original', allow_private=False):
     """Engines get detached pre-selection candidates only; no gold or quality."""
-    validate(snapshot)
+    validate(snapshot, allow_private=allow_private)
     _require(ordering in ('original', 'id', 'newest'), 'invalid ordering')
     candidates = copy.deepcopy(snapshot['candidates'])
     if ordering == 'id': candidates.sort(key=lambda c: c['candidate_id'])
@@ -190,15 +193,20 @@ def main():
     parser.add_argument('snapshot')
     parser.add_argument('--ordering', choices=('original', 'id', 'newest'), default='original')
     parser.add_argument('--b2', action='store_true', help='also run the synthetic offline deterministic baseline')
+    parser.add_argument('--encrypted-private', action='store_true', help='decrypt private snapshot in memory using EDITORIAL_BENCHMARK_KEY')
     args = parser.parse_args()
     try:
-        data = validate(json.loads(Path(args.snapshot).read_text(encoding='utf-8')))
+        if args.encrypted_private:
+            from src.editorial_benchmark.crypto import decrypt, key_from_env
+            data = validate(decrypt(Path(args.snapshot).read_bytes(), key_from_env()), allow_private=True)
+            _require(data['data_class'] == 'private', 'private snapshot required')
+        else:
+            data = validate(json.loads(Path(args.snapshot).read_text(encoding='utf-8')))
         engines = {name: (lambda _c, result=result: copy.deepcopy(result)) for name, result in data['recorded_results'].items()}
         if args.b2:
             from .b2 import select
-            _require(data['data_class'] == 'synthetic', 'B2 CLI only accepts synthetic inputs')
             engines['B2'] = lambda candidates: select(candidates, data['captured_at'], capacity=16)
-        print(json.dumps(replay(data, engines, args.ordering), sort_keys=True, ensure_ascii=False))
+        print(json.dumps(replay(data, engines, args.ordering, allow_private=args.encrypted_private), sort_keys=True, ensure_ascii=False))
     except (ValueError, KeyError, OSError, TypeError):
         parser.exit(2, 'Invalid or inaccessible snapshot. No content was emitted.\n')
 
