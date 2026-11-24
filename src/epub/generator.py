@@ -5,7 +5,7 @@ EPUB 生成器模块
 
 import os
 from typing import List, Tuple, Dict, Optional, Union
-from ebooklib import epub
+from ebooklib import ITEM_DOCUMENT, epub
 from bs4 import BeautifulSoup
 
 from src.config import Config, ContentSource
@@ -15,6 +15,9 @@ from src.epub.cover import CoverGenerator
 from src.epub.toc import TOCGenerator
 from src.epub.helpers import generate_toc_link, create_section_divider_page
 from src.epub.i18n import EPUBTranslator
+from src.epub.typography import (
+    add_french_fonts, article_language, language_attributes, language_tag,
+)
 from src.processors.image_processor import ImageProcessor
 from src.utils.logger import get_logger
 from src.utils.helpers import get_now
@@ -98,10 +101,12 @@ class EPUBGenerator:
         # 9. 渲染并添加 Emoji 图片 (一次性添加)
         self._add_rendered_emojis(book, unique_emojis)
 
+        languages = {item.file_name: item.lang for item in book.get_items_of_type(ITEM_DOCUMENT)}
+
         # 10. 手动生成并添加 nav.xhtml
         nav = epub.EpubHtml(title=book.title, file_name='nav.xhtml', uid='nav')
         nav.properties = ['nav']
-        nav.content = self._generate_nav_content(book.title, book.toc, is_nav=True)
+        nav.content = self._generate_nav_content(book.title, book.toc, is_nav=True, languages=languages)
         nav.add_link(href='style/default.css', rel='stylesheet')
         book.add_item(nav)
 
@@ -112,7 +117,7 @@ class EPUBGenerator:
             uid='overview',
             lang=self.translator.locale
         )
-        overview.content = self._generate_nav_content(book.title, book.toc, is_nav=False)
+        overview.content = self._generate_nav_content(book.title, book.toc, is_nav=False, languages=languages)
         overview.add_link(href='style/default.css', rel='stylesheet')
         book.add_item(overview)
 
@@ -258,7 +263,10 @@ class EPUBGenerator:
 
         chapters_to_process = []  # [(chapter, article, source)]
 
+        publication_languages = {book.language}
         for source, articles, source_title in sections:
+            section_language = language_tag((source.metadata or {}).get("epub_language"))
+            article_languages = [article_language(article, section_language) for article in articles]
             # 在该分组的第一篇文章前插入章节分隔页，显示所属栏目标题
             section_title = self.toc_generator._get_source_title(
                 source, articles, source_title
@@ -269,10 +277,11 @@ class EPUBGenerator:
             # 构造栏目下所有文章的信息，用于在分隔页展示子目录
             articles_info = []
             curr_chapter_id = chapter_id
-            for article in articles:
+            for article, language in zip(articles, article_languages):
                 articles_info.append({
                     "title": article.title,
-                    "file_name": f"chapter_{curr_chapter_id}.xhtml"
+                    "file_name": f"chapter_{curr_chapter_id}.xhtml",
+                    "language": language or "und",
                 })
                 curr_chapter_id += 1
 
@@ -281,19 +290,23 @@ class EPUBGenerator:
                 file_name=f"divider_{divider_id}.xhtml",
                 target_toc_id=target_toc_id,
                 articles_info=articles_info,
-                translator=self.translator
+                translator=self.translator,
+                language=section_language,
             )
             book.add_item(divider)
             spine.append(divider)
             divider_id += 1
 
-            for article in articles:
+            for article, language in zip(articles, article_languages):
+                if language and language not in publication_languages:
+                    book.add_metadata("DC", "language", language)
+                    publication_languages.add(language)
                 # 标题是纯文本元数据；正文 h1 则使用本地图片渲染 emoji。
                 rendered_title = ContentProcessor.render_text_with_emojis(article.title)
 
                 # 生成章节内容
                 chapter_content = self._generate_chapter_content(
-                    article, chapter_id, rendered_title=rendered_title
+                    article, chapter_id, rendered_title=rendered_title, language=language
                 )
                 
                 # 收集 Emoji 并替换为图片标签 (content)
@@ -303,8 +316,10 @@ class EPUBGenerator:
                 # 创建章节
                 chapter = epub.EpubHtml(
                     title=article.title,
-                    file_name=f"chapter_{chapter_id}.xhtml"
+                    file_name=f"chapter_{chapter_id}.xhtml",
+                    lang=language or "und",
                 )
+                chapter.add_link(href="style/default.css", rel="stylesheet")
                 chapter.content = chapter_content
 
                 chapters_to_process.append((chapter, article, source))
@@ -420,7 +435,8 @@ class EPUBGenerator:
         )
 
     def _generate_chapter_content(
-        self, article: Article, chapter_id: int, rendered_title: Optional[str] = None
+        self, article: Article, chapter_id: int, rendered_title: Optional[str] = None,
+        language: Optional[str] = None,
     ) -> str:
         """
         生成章节 HTML 内容 (EPUB 3.0 格式，返回目录链接在标题下方)
@@ -440,15 +456,21 @@ class EPUBGenerator:
         safe_author = html.escape(article.author) if article.author else ""
 
         # EPUB 3.0 使用 HTML5 DOCTYPE
-        toc_link = generate_toc_link(f"toc_chapter_{chapter_id}", self.translator)
+        toc_link = generate_toc_link(
+            f"toc_chapter_{chapter_id}", self.translator,
+            language=self.translator.locale,
+        )
+        article_attrs = language_attributes(language)
+        ui_attrs = language_attributes(self.translator.locale)
+        document_attrs = language_attributes(language or "und")
         content_html = f"""<!DOCTYPE html>
-<html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops" epub:prefix="z3998: http://www.daisy.org/z3998/2012/vocab/structure/#" lang="{self.translator.locale}" xml:lang="{self.translator.locale}">
+<html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops" epub:prefix="z3998: http://www.daisy.org/z3998/2012/vocab/structure/#"{document_attrs}>
 <head>
     <title>{safe_title}</title>
     <link rel="stylesheet" type="text/css" href="style/default.css"/>
 </head>
 <body>
-    <h1>{rendered_title}</h1>
+    <h1{article_attrs}>{rendered_title}</h1>
     {toc_link}
 """
 
@@ -460,15 +482,15 @@ class EPUBGenerator:
             safe_date = html.escape(str(article.published_date))
             metadata_lines.append(f"{self.translator('article.date')}: {safe_date}")
         if metadata_lines:
-            content_html += "<p class='author date'>" + "<br/>".join(metadata_lines) + "</p>"
+            content_html += f"<p class='author date'{ui_attrs}>" + "<br/>".join(metadata_lines) + "</p>"
 
         # 添加正文（正文已经由 ContentProcessor 处理过，应该是安全的 HTML 片段）
-        content_html += f"<div class='content'>{article.content}</div>"
+        content_html += f"<div class='content'{article_attrs}>{article.content}</div>"
 
         # 添加原文链接 (仅保留 http/https 的合法绝对链接)
         if article.url and (article.url.startswith('http://') or article.url.startswith('https://')):
             safe_url = html.escape(article.url)
-            content_html += f"<p class='link'>{self.translator('article.original_link')}: <a href='{safe_url}'>{safe_url}</a></p>"
+            content_html += f"<p class='link'{ui_attrs}>{self.translator('article.original_link')}: <a href='{safe_url}'>{safe_url}</a></p>"
 
         content_html += """
 </body>
@@ -785,7 +807,8 @@ class EPUBGenerator:
         self,
         book_title: str,
         toc: List[Union[epub.Link, Tuple[epub.Link, List[epub.Link]]]],
-        is_nav: bool = True
+        is_nav: bool = True,
+        languages: Optional[Dict[str, Optional[str]]] = None,
     ) -> str:
         """
         手动生成 EPUB 3.0 的 nav.xhtml 内容或 toc.xhtml 内容。
@@ -793,6 +816,7 @@ class EPUBGenerator:
         """
         import html
         from ebooklib import epub as epub_lib
+        languages = languages or {}
         safe_title = html.escape(book_title)
         rendered_book_title = ContentProcessor.render_text_with_emojis(book_title)
         
@@ -874,15 +898,17 @@ class EPUBGenerator:
                 # 两级 structure（如 mail/rss）
                 section_link, links = item
                 content += f'            <li id="toc_{section_link.uid}" style="{STYLE_LI}">\n'
-                link_html = f'<a class="section-link" href="{section_link.href}" style="{STYLE_SECTION_LINK}">{ContentProcessor.render_text_with_emojis(section_link.title)}</a>'
+                section_attrs = language_attributes(languages.get(section_link.href))
+                link_html = f'<a class="section-link" href="{section_link.href}"{section_attrs} style="{STYLE_SECTION_LINK}">{ContentProcessor.render_text_with_emojis(section_link.title)}</a>'
                 if not is_nav:
                     link_html = f'<h2 style="{STYLE_H2}">{link_html}</h2>'
                 content += f'                {link_html}\n'
                 content += f'                <ol style="{STYLE_NESTED_OL}">\n'
                 for link in links:
+                    article_attrs = language_attributes(languages.get(link.href))
                     content += (
                         f'                    <li id="toc_{link.uid}" style="{STYLE_NESTED_LI}">'
-                        f'<a class="article-link" href="{link.href}" style="{STYLE_ARTICLE_LINK}">'
+                        f'<a class="article-link" href="{link.href}"{article_attrs} style="{STYLE_ARTICLE_LINK}">'
                         f'{ContentProcessor.render_text_with_emojis(link.title)}</a></li>\n'
                     )
                 content += f'                </ol>\n'
@@ -1120,7 +1146,7 @@ pre code {
 #toc li ol li, #overview li ol li {
     margin: 0.4em 0;
 }
-""" + extra_css
+""" + extra_css + add_french_fonts(book)
         )
         book.add_item(css)
 
