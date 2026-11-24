@@ -1,0 +1,15 @@
+{
+  "run_url": "https://github.com/MVVVVK/OughtGather/actions/runs/45348237659",
+  "artifact": "b3-e5-aggregate",
+  "provenance": "Values transcribed from user-provided run summary; artifact download returned HTTP 403 and its JSON has not been independently inspected.",
+  "scope": "self-authored synthetic titles, frozen held-out pairs; not evidence of real-news performance",
+  "frozen_threshold": 0.88,
+  "held_out_pairs": 50,
+  "b2_f1": 0,
+  "b3_heuristic_f1": 0,
+  "e5_raw": {"f1": 0.935484, "tp": 29, "fp": 3, "fn": 1, "tn": 17},
+  "e5_hybrid": {"f1": 0, "abstained": 50},
+  "synthetic_candidate_count": 300,
+  "candidate_processing_seconds": 6.534,
+  "peak_rss_kib": 1119980
+}

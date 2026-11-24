@@ -1,0 +1,18 @@
+{
+  "run_id": 45345874515,
+  "status": "ok",
+  "model": "intfloat/multilingual-e5-small",
+  "revision": "fd1525a9fd15316a2d503bf26ab031a61d056e98",
+  "device": "cpu",
+  "dimensions": 384,
+  "downloaded_bytes": 492794646,
+  "download_seconds": 3.467,
+  "load_seconds": 3.084,
+  "inference_seconds": 0.032,
+  "peak_rss_kib": 888968,
+  "paired_mean_cosine": 0.926006,
+  "unrelated_mean_cosine": 0.839302,
+  "title_count": 4,
+  "provenance": "Values supplied by user from the aggregate artifact; Actions API confirmed the named job succeeded. Artifact contents have not been independently retrieved in this session.",
+  "limitation": "Two invented bilingual pairs and two unrelated comparisons; not a news accuracy, calibrated threshold or production performance evaluation."
+}

@@ -1,0 +1,6 @@
+# Optional isolated CPU experiment only; not imported by the production publisher.
+# Install a platform-appropriate CPU PyTorch wheel separately, e.g. from the official CPU index.
+torch==2.6.0
+transformers==4.48.3
+safetensors>=0.4,<1
+sentencepiece>=0.2,<1
