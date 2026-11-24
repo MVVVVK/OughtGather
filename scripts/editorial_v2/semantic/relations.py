@@ -21,18 +21,18 @@ def compare(a, b, vector_a, vector_b, as_of, threshold, reviewer=None):
     time = 'unknown' if da is None or db is None else 'conflict' if abs(da - db) > timedelta(hours=72) else 'compatible'
     score = cosine(vector_a, vector_b)
     if score < threshold: return {'relation': 'unknown', 'time': time, 'score': score}
-    if time == 'conflict': return {'relation': 'unknown', 'time': time, 'score': score}
     fa, fb = features(a), features(b)
     shared = fa['entities'] & fb['entities']
     action = bool(fa['cues'] & fb['cues'])
     conflict = bool(fa['entities'] - shared and fb['entities'] - shared)
-    # A semantic match plus title entities and action is only a cautious proposal.
-    if len(shared) >= 2 and action and not conflict:
-        return {'relation': 'same_event', 'time': time, 'score': score}
     if reviewer is not None:
-        try: decision = reviewer(a, b, {'time': time, 'semantic_candidate': True})
+        # Evidence informs review; it is neither an automatic merge nor a veto.
+        evidence = {'time': time, 'semantic_candidate': True,
+                    'shared_entity_count': len(shared), 'shared_action': action,
+                    'entity_conflict': conflict}
+        try: decision = reviewer(a, b, evidence)
         except Exception: return {'relation': 'unknown', 'time': time, 'score': score}
-        if decision not in ('same_event', 'different', 'unknown'): raise ValueError('invalid review')
+        if decision not in ('same_event', 'substantive_update', 'related_different', 'different', 'unknown'): raise ValueError('invalid review')
         return {'relation': decision, 'time': time, 'score': score}
     return {'relation': 'unknown', 'time': time, 'score': score}
 
@@ -45,7 +45,7 @@ def cluster(candidates, encoder, as_of, threshold, reviewer=None):
     by_id = {item['candidate_id']: vector for item, vector in zip(ordered, vectors)}
     groups = []
     for candidate in ordered:
-        group = next((g for g in groups if all(compare(candidate, other, by_id[candidate['candidate_id']], by_id[other['candidate_id']], as_of, threshold, reviewer)['relation'] in ('same_item', 'same_event') for other in g)), None)
+        group = next((g for g in groups if all(compare(candidate, other, by_id[candidate['candidate_id']], by_id[other['candidate_id']], as_of, threshold, reviewer)['relation'] in ('same_item', 'same_event', 'substantive_update') for other in g)), None)
         if group is None: groups.append([candidate])
         else: group.append(candidate)
     return groups

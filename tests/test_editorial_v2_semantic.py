@@ -28,10 +28,10 @@ def test_missing_time_is_distinct_from_conflict_and_not_automatic_abstention():
     a = candidate('a', 'Neptune Benghazi vessel attack')
     b = candidate('b', 'Attaque Neptune Benghazi', language='fr')
     result = compare(a, b, [1., 0.], [1., 0.], NOW, 0.9)
-    assert result['relation'] == 'same_event' and result['time'] == 'unknown'
+    assert result['relation'] == 'unknown' and result['time'] == 'unknown'
     a['published_at'] = '2026-11-20T00:00:00Z'; b['published_at'] = '2026-11-24T00:00:00Z'
     result = compare(a, b, [1., 0.], [1., 0.], NOW, 0.9, lambda *_: 'same_event')
-    assert result['relation'] == 'unknown' and result['time'] == 'conflict'
+    assert result['relation'] == 'same_event' and result['time'] == 'conflict'
 
 
 def test_high_similarity_alone_is_not_same_event_and_reviewer_is_injectable():
@@ -61,10 +61,10 @@ def test_representative_fallback_budget_and_no_forced_filling():
     tested = []
     def verify(c):
         tested.append(c['candidate_id']); return 'failed' if c['candidate_id'] == 'a' else 'full_text'
-    result = run(rows, NOW.isoformat(), FakeEncoder(), 0.9, importance, verify)
+    result = run(rows, NOW.isoformat(), FakeEncoder(), 0.9, importance, verify, reviewer=lambda *_: 'same_event' if _[0]['candidate_id'] in ('a', 'b') and _[1]['candidate_id'] in ('a', 'b') else 'unknown')
     assert result['selected'] == ['b'] and tested == ['a', 'b'] and result['verification_calls'] == 2
     assert result['quality']['a'] == 'failed' and result['quality']['b'] == 'full_text'
-    result = run(rows, NOW.isoformat(), FakeEncoder(), 0.9, importance, verify, verification_budget=1)
+    result = run(rows, NOW.isoformat(), FakeEncoder(), 0.9, importance, verify, reviewer=lambda *_: 'same_event' if {_[0]['candidate_id'], _[1]['candidate_id']} == {'a', 'b'} else 'unknown', verification_budget=1)
     assert not result['selected'] and result['verification_calls'] == 1
     with pytest.raises(ValueError): run(rows, NOW.isoformat(), FakeEncoder(), 0.9, importance, verify, verification_budget=41)
 
@@ -76,7 +76,7 @@ def test_fact_marginal_gain_and_untrusted_assessment():
     def importance(group, items):
         return {'level':'A', 'uncertainty':'low', 'evidence_ids':[group[0]['candidate_id']],
                 'fact_ids':[item['id'] for item in items]}
-    result = run(rows, NOW.isoformat(), FakeEncoder(), 0.9, importance, lambda _: 'full_text', facts_by_event=facts, capacity=2)
+    result = run(rows, NOW.isoformat(), FakeEncoder(), 0.9, importance, lambda c: {'status': 'full_text', 'verified_fact_ids': ['f2' if c['candidate_id'] == 'c' else 'f1']}, facts_by_event=facts, capacity=2)
     assert result['selected'] == ['a', 'c']
     def bad(group, items): return {'level':'A', 'uncertainty':'low', 'evidence_ids':['unknown'], 'fact_ids':[]}
     result = run(rows, NOW.isoformat(), FakeEncoder(), 0.9, bad, lambda _: 'full_text')
@@ -156,8 +156,59 @@ def test_synthetic_substantive_update_can_survive_representative_failure():
         return {'level': 'A', 'uncertainty': 'low', 'evidence_ids': ['b'],
                 'fact_ids': [fact['id'] for fact in supplied]}
     def verify(c): return 'failed' if c['candidate_id'] == 'a' else 'full_text'
-    result = run([original, update], NOW.isoformat(), FakeEncoder(), .9, importance, verify, facts_by_event=facts)
+    result = run([original, update], NOW.isoformat(), FakeEncoder(), .9, importance, verify, reviewer=lambda *_: 'substantive_update', facts_by_event=facts)
     assert result['selected'] == ['b']
     assert result['quality'] == {'a': 'failed', 'b': 'full_text'}
-    assert result['editorial_diagnostics'][0]['fact_ids'] == ['update-fact']
+    assert result['editorial_diagnostics'][0]['unverified_event_fact_ids'] == ['update-fact']
+    assert result['editorial_diagnostics'][0]['representative_verified_fact_ids'] == []
     # Group-level fact IDs are supplied evidence, not proof that the selected text contains them.
+
+
+def test_auxiliary_conflict_does_not_prevent_manual_review():
+    a = candidate('a', 'One organization attack', '2026-11-20T00:00:00Z')
+    b = candidate('b', 'Different organization direct response', '2026-11-24T00:00:00Z')
+    seen = []
+    def reviewer(a, b, evidence):
+        seen.append(evidence)
+        return 'substantive_update'
+    assert compare(a, b, [1., 0.], [1., 0.], NOW, .9, reviewer)['relation'] == 'substantive_update'
+    assert seen[0]['time'] == 'conflict'
+    assert compare(a, b, [1., 0.], [1., 0.], NOW, .9)['relation'] == 'unknown'
+    assert compare(a, b, [1., 0.], [1., 0.], NOW, .9, lambda *_: 'related_different')['relation'] == 'related_different'
+
+
+def test_event_facts_are_not_attributed_to_representative_without_verification():
+    rows = [candidate('a', 'Original report', excerpt='long original'), candidate('b', 'Direct update')]
+    facts = {'a': [{'id': 'update', 'description': 'new information'}]}
+    def importance(group, facts):
+        return {'level': 'A', 'uncertainty': 'low', 'evidence_ids': ['b'], 'fact_ids': ['update']}
+    result = run(rows, NOW.isoformat(), FakeEncoder(), .9, importance, lambda _: 'full_text',
+                 reviewer=lambda *_: 'substantive_update', facts_by_event=facts)
+    item = result['editorial_diagnostics'][0]
+    assert item['candidate_id'] == 'a' and item['event_fact_ids'] == ['update']
+    assert item['representative_verified_fact_ids'] == [] and item['unverified_event_fact_ids'] == ['update']
+    result = run(rows, NOW.isoformat(), FakeEncoder(), .9, importance,
+                 lambda _: {'status': 'full_text', 'verified_fact_ids': ['invented']},
+                 reviewer=lambda *_: 'substantive_update', facts_by_event=facts)
+    assert not result['selected'] and result['review_queue']
+
+
+def test_uncertain_major_event_is_visible_for_manual_review():
+    rows = [candidate('major', 'Major event, incomplete evidence')]
+    def importance(group, facts):
+        return {'level': 'A', 'uncertainty': 'high', 'evidence_ids': ['major'], 'fact_ids': []}
+    result = run(rows, NOW.isoformat(), FakeEncoder(), .9, importance, lambda _: 'full_text')
+    assert result['status'] == 'partial' and result['selected'] == []
+    assert result['review_queue'] == [{'event_id': 'major', 'candidate_ids': ['major'], 'reason': 'importance_uncertain', 'level': 'A'}]
+
+
+def test_read_only_trial_uses_only_explicit_manual_review():
+    from scripts.editorial_v2.semantic.trial import trial
+    data = {'content_origin': 'self_authored', 'captured_at': NOW.isoformat(),
+            'candidates': [{'candidate_id': x, 'title': x} for x in 'abc'],
+            'manual_reviews': [{'a': 'a', 'b': 'b', 'relation': 'same_event'}]}
+    assert trial(data, FakeEncoder())['groups'] == [['a', 'b'], ['c']]
+    data['manual_reviews'].append({'a': 'a', 'b': 'missing', 'relation': 'same_event'})
+    with pytest.raises(ValueError): trial(data, FakeEncoder())
+    data['content_origin'] = 'media'
+    with pytest.raises(ValueError): trial(data, FakeEncoder())

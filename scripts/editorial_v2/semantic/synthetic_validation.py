@@ -120,7 +120,7 @@ def performance_300(encoder, threshold):
             'unique_synthetic_event_count': len({cid.split('-')[0] for cid in selected}),
             'verification_calls': result['verification_calls'], 'verification_budget': result['verification_budget'],
             'verified_fallback_groups': fallback, 'selected_update_representatives': sum(cid.endswith(('-1', '-2')) for cid in selected),
-            'distinct_supplied_facts_selected': len({fact for item in result['editorial_diagnostics'] for fact in item['fact_ids']}),
+            'distinct_supplied_facts_selected': len({fact for item in result['editorial_diagnostics'] for fact in item['event_fact_ids']}),
             'elapsed_seconds': round(duration, 3), 'peak_rss_kib': resource.getrusage(resource.RUSAGE_SELF).ru_maxrss,
             'importance_and_verifier': 'injected synthetic fixtures, not a real AI or external validation',
             'limitation': 'Group-level fact IDs do not prove the selected representative contains each fact.'}
