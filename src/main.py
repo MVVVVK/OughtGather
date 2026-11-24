@@ -471,17 +471,36 @@ def main(argv=None):
         raw_counts = {}
 
         collector = None
+        benchmark = None
+        benchmark_key = None
         if os.getenv("AI_EDITOR_MODE", "off") == "shadow" and (not args.test_mode or os.getenv("AI_TEST_OVERRIDE") == "true"):
             try:
                 from src.ai.candidates import CandidateCollector
                 collector = CandidateCollector(int(os.getenv("AI_MAX_EXCERPT_CHARS") or "600"))
             except Exception:
                 logger.warning("AI candidate observation unavailable")
+        if os.getenv("EDITORIAL_BENCHMARK_ENABLED", "false") == "true" and not args.test_mode:
+            try:
+                from pathlib import Path
+                Path('output/.benchmark-stage.enc').unlink(missing_ok=True)
+                from src.editorial_benchmark.collector import BenchmarkCollector, parse_permissions
+                from src.editorial_benchmark.crypto import key_from_env
+                benchmark_key = key_from_env()
+                benchmark = BenchmarkCollector(parse_permissions(os.environ['EDITORIAL_BENCHMARK_PERMISSIONS']))
+            except Exception:
+                logger.warning("Benchmark capture unavailable")
+        observer = collector
+        if os.getenv("EDITORIAL_BENCHMARK_ENABLED", "false") == "true" and not args.test_mode:
+            from src.editorial_benchmark.collector import Fanout
+            observer = Fanout(collector, benchmark)
         completed = _run_parallel_tasks(
             config.body,
-            lambda source: (_fetch_source_task(source, tracker, config.limit, collector) if collector is not None
+            lambda source: (_fetch_source_task(source, tracker, config.limit, observer) if observer is not None
                             else _fetch_source_task(source, tracker, config.limit)),
         )
+        if benchmark is not None:
+            from datetime import datetime, timezone
+            benchmark_cutoff = datetime.now(timezone.utc).isoformat()
         for source, result, _records in completed:
             results.append(result)
             raw_counts[source] = len(result.articles) if result.success else 0
@@ -570,6 +589,12 @@ def main(argv=None):
                                 if row.get("included"):
                                     selected.add(candidate_id)
                 snapshot = collector.snapshot(1000000)
+                if os.getenv('EDITORIAL_BENCHMARK_ENABLED', '') == 'true' and not args.test_mode:
+                    # Fail closed for external Shadow use when benchmark permissions are enabled.
+                    snapshot = [item for item in snapshot if benchmark is not None and item['candidate_id'] in benchmark.b1_ids]
+                    for item in snapshot:
+                        if item['candidate_id'] not in benchmark.excerpt_ids:
+                            item['rss_excerpt'] = ''
                 for item in snapshot:
                     item["traditional_selected"] = item["candidate_id"] in selected
                     item["traditional_status"] = outcomes.get(item["candidate_id"], "unknown")
@@ -579,6 +604,21 @@ def main(argv=None):
                 _write_private("output/.ai-candidates.json", json.dumps(snapshot, ensure_ascii=False).encode("utf-8"))
             except Exception:
                 logger.warning("AI candidate snapshot unavailable")
+
+        if benchmark is not None:
+            try:
+                from datetime import datetime
+                from zoneinfo import ZoneInfo
+                from src.delivery.service import _write_private
+                from src.editorial_benchmark.crypto import encrypt
+                from src.editorial_benchmark.snapshot import build_stage
+                target = datetime.fromtimestamp(start_time, ZoneInfo('Asia/Shanghai')).replace(hour=6, minute=30, second=0, microsecond=0).isoformat()
+                # The snapshot above is the exact order passed to Shadow, after permission filtering.
+                order = [item['candidate_id'] for item in snapshot] if collector is not None else None
+                stage = build_stage(benchmark, processed_results, tracker, order, target, benchmark_cutoff)
+                _write_private('output/.benchmark-stage.enc', encrypt(stage, benchmark_key))
+            except Exception:
+                logger.warning("Benchmark capture unavailable")
 
         # 6. 输出执行数据汇总表格
         summary_headers = ["#", "类型", "内容源 / URL", "状态", "抓取数", "新增数", "错误数", "备注 / 错误"]

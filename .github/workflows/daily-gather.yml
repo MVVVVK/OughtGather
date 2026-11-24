@@ -160,6 +160,9 @@ jobs:
 
       - name: Run Ought Gather
         env:
+          EDITORIAL_BENCHMARK_ENABLED: ${{ vars.EDITORIAL_BENCHMARK_ENABLED }}
+          EDITORIAL_BENCHMARK_PERMISSIONS: ${{ secrets.EDITORIAL_BENCHMARK_PERMISSIONS }}
+          EDITORIAL_BENCHMARK_KEY: ${{ secrets.EDITORIAL_BENCHMARK_KEY }}
           AI_EDITOR_MODE: ${{ inputs.ai_editor_mode_override == 'off' && 'off' || inputs.ai_editor_mode_override == 'shadow' && 'shadow' || vars.AI_EDITOR_MODE || ((github.event_name == 'schedule' || github.event_name == 'repository_dispatch') && 'shadow' || 'off') }}
           AI_TEST_OVERRIDE: ${{ inputs.run_ai_shadow }}
           AI_MAX_CANDIDATES: ${{ vars.AI_MAX_CANDIDATES }}
@@ -206,7 +209,11 @@ jobs:
           if [ "${{ inputs.retry_failed }}" = "true" ]; then
             args+=(--retry-failed)
           fi
-          python -u src/main.py "${args[@]}"
+          if [ "$EDITORIAL_BENCHMARK_ENABLED" = "true" ] && [ "${{ inputs.test_mode }}" != "true" ]; then
+            python -u src/main.py "${args[@]}" > /dev/null 2>&1
+          else
+            python -u src/main.py "${args[@]}"
+          fi
 
       - name: Check verified delivery for daily marker
         if: ${{ always() }}
@@ -241,6 +248,7 @@ jobs:
           key: publication-v1-${{ needs.publication-gate.outputs.day }}
 
       - name: Run AI Editor Shadow
+        id: ai_shadow
         if: ${{ success() && (!inputs.test_mode || inputs.run_ai_shadow) }}
         continue-on-error: true
         env:
@@ -267,6 +275,23 @@ jobs:
           AI_OUTPUT_PRICE_PER_MILLION: ${{ vars.AI_OUTPUT_PRICE_PER_MILLION }}
           AI_PRICING_VERSION: ${{ vars.AI_PRICING_VERSION }}
         run: python -m src.ai
+
+      - name: Save encrypted editorial benchmark
+        if: ${{ always() && !inputs.test_mode && vars.EDITORIAL_BENCHMARK_ENABLED == 'true' }}
+        continue-on-error: true
+        env:
+          EDITORIAL_BENCHMARK_ENABLED: ${{ vars.EDITORIAL_BENCHMARK_ENABLED }}
+          EDITORIAL_BENCHMARK_KEY: ${{ secrets.EDITORIAL_BENCHMARK_KEY }}
+          EDITORIAL_BENCHMARK_RETENTION_DAYS: ${{ vars.EDITORIAL_BENCHMARK_RETENTION_DAYS }}
+          BENCHMARK_SHADOW_OUTCOME: ${{ steps.ai_shadow.outcome }}
+          BENCHMARK_SHADOW_MODE: ${{ inputs.ai_editor_mode_override == 'off' && 'off' || inputs.ai_editor_mode_override == 'shadow' && 'shadow' || vars.AI_EDITOR_MODE || ((github.event_name == 'schedule' || github.event_name == 'repository_dispatch') && 'shadow' || 'off') }}
+          WEBDAV_ENABLED: ${{ secrets.WEBDAV_ENABLED }}
+          WEBDAV_URL: ${{ secrets.WEBDAV_URL }}
+          WEBDAV_USERNAME: ${{ secrets.WEBDAV_USERNAME }}
+          WEBDAV_PASSWORD: ${{ secrets.WEBDAV_PASSWORD }}
+          WEBDAV_REMOTE_PATH: ${{ secrets.WEBDAV_REMOTE_PATH }}
+          AI_MEMORY_REMOTE_DIR: ${{ vars.AI_MEMORY_REMOTE_DIR }}
+        run: python -m src.editorial_benchmark
 
       - name: Capture publication health
         if: always()
@@ -306,7 +331,7 @@ jobs:
           retention-days: 7
 
       - name: Upload AI editor report
-        if: always()
+        if: ${{ always() && vars.EDITORIAL_BENCHMARK_ENABLED != 'true' }}
         uses: actions/upload-artifact@v6
         with:
           name: ai-editor-report
@@ -317,7 +342,7 @@ jobs:
           retention-days: 7
 
       - name: Upload quality report
-        if: always()
+        if: ${{ always() && vars.EDITORIAL_BENCHMARK_ENABLED != 'true' }}
         uses: actions/upload-artifact@v6
         with:
           name: quality-report
@@ -347,7 +372,7 @@ jobs:
 
       - name: Upload EPUB artifact
         # 明文 EPUB 必须由手动运行者明确开启。
-        if: ${{ github.event_name == 'workflow_dispatch' && inputs.upload_plaintext_epub }}
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.upload_plaintext_epub && vars.EDITORIAL_BENCHMARK_ENABLED != 'true' }}
         uses: actions/upload-artifact@v6
         with:
           name: epub-files
@@ -356,7 +381,7 @@ jobs:
 
       - name: Upload dedup records
         # 上传去重数据文件（data/fetched_urls.txt），仅在失败或手动触发时执行，便于排查
-        if: failure() || github.event_name == 'workflow_dispatch'
+        if: ${{ (failure() || github.event_name == 'workflow_dispatch') && vars.EDITORIAL_BENCHMARK_ENABLED != 'true' }}
         uses: actions/upload-artifact@v6
         with:
           name: dedup-records
@@ -366,7 +391,7 @@ jobs:
 
       - name: Upload logs
         # 仅在失败或手动触发时上传运行日志，节省正常定时运行的 Artifact 开销与时间
-        if: failure() || github.event_name == 'workflow_dispatch'
+        if: ${{ (failure() || github.event_name == 'workflow_dispatch') && vars.EDITORIAL_BENCHMARK_ENABLED != 'true' }}
         uses: actions/upload-artifact@v6
         with:
           name: logs
