@@ -46,6 +46,43 @@ jobs:
       - name: Test public RSS diagnostics offline
         run: python -m pytest -o addopts= scripts/rss_diagnostics/test_rss_probe.py scripts/rss_diagnostics/test_phase3_offline.py scripts/rss_diagnostics/test_public_samples.py scripts/rss_diagnostics/test_event_ledger.py -q
 
+  b3-e5-experiment:
+    # Only explicit manual dispatch of the B3 branch; never PR/push CI.
+    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/codex/editorial-b3-hybrid'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    env:
+      HF_HOME: ${{ runner.temp }}/b3-hf
+      HF_HUB_DISABLE_IMPLICIT_TOKEN: '1'
+      HF_HUB_DISABLE_TELEMETRY: '1'
+      HF_ENDPOINT: https://huggingface.co
+      OMP_NUM_THREADS: '2'
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - name: Initialize safe status
+        run: python -c 'import json; open("b3-e5-report.json", "w").write(json.dumps({"status":"failed","failure_stage":"dependencies"}))'
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.11'
+      - name: Install CPU PyTorch
+        run: python -m pip install torch==2.6.0 --index-url https://download.pytorch.org/whl/cpu
+      - name: Install isolated experiment dependencies
+        run: python -m pip install -r requirements-b3-experiment.txt
+      - name: Download pinned model and run synthetic inference
+        run: python -m scripts.editorial_v2.semantic.ci_experiment
+      - name: Upload aggregate-only experiment status
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: b3-e5-aggregate
+          path: b3-e5-report.json
+          retention-days: 7
+          if-no-files-found: warn
+
   rss-public-diagnostics:
     # Manual only; restricted to the audit branch. No Secrets or production config.
     if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/codex/rss-source-quality-audit'

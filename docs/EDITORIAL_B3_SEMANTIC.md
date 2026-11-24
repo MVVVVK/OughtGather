@@ -32,3 +32,11 @@ python -m scripts.editorial_v2.semantic.crossnews /local/path/crossnews-ua.csv
 [SemEval-2022 Task 8](https://zenodo.org/records/6507872) 提供 URL 对及相似度标注，记录页面的 license 字段未清楚显示许可证；原文章在第三方档案，不能由标注开放推定原文获准复制。CrossNews-UA 部分采样自该任务，若混用还需检查同文章/事件泄漏。[Priberam news-clustering](https://github.com/Priberam/news-clustering) 仓库提供代码及 FTP 下载脚本，但代码许可证不自动授予新闻原文或数据许可；未找到足以确认该数据可在本项目使用的明确条款，因此未下载或复制。两者目前都不能当作已获许可的独立验收集。
 
 需要用户在符合来源许可的环境准备可访问的固定 E5 缓存、明确可用的独立事件标注数据，以及必要的成本和隐私授权。先运行开发集，再以文章**及事件**无交叉的独立集合单次评估；报告语义原始分数与保守复核后的表现、相近但不同事件、缺日期、错误案例和 CPU 开销。无这些证据或重要性/质量标签前，停止声称模型优于 B2/B3-heuristic，也不得部署正式选稿。
+
+## 手动 GitHub-hosted CPU 冒烟测试
+
+PR #13 的现有 **CI** 工作流增加 `b3-e5-experiment` job，只在手动 `workflow_dispatch` 且分支为 `codex/editorial-b3-hybrid` 时执行；普通 PR 和 push 不下载模型。job 使用 GitHub-hosted Ubuntu、Python 3.11、官方 CPU PyTorch、`contents: read`、30 分钟上限，不引用生产 Secrets、不运行日报、DeepSeek 或 WebDAV。它只从 Hugging Face 官方仓库获取固定 revision 的 safetensors、模型配置及 tokenizer 必需文件，不获取重复权重；不保存模型为 Artifact。
+
+在 GitHub Actions 页面选择 **CI** → **Run workflow**，分支选择 **`codex/editorial-b3-hybrid`** 并运行。检查 `b3-e5-experiment` job，下载 `b3-e5-aggregate` Artifact 中的 `b3-e5-report.json`；该文件仅包含阶段状态和聚合指标。`failure_stage=dependencies`、`model_download`、`model_load` 或 `synthetic_inference` 指出失败阶段；若官方返回 HTTP 403，记录状态后停止，不使用镜像或绕过限制。成功报告记录实际下载文件字节总数、加载及四条自行编写英法标题的推理时间、384 维向量范数范围和进程峰值 RSS。合成句子的相似度均值只验证真实推理，不是新闻事件准确率。
+
+CrossNews-UA 数据卡声明 CC BY 4.0，但 CSV 包含第三方新闻全文，原文可否由本项目进行处理尚未独立确认。因此该 job **不下载或处理 CrossNews-UA**，在报告中标为 `skipped_license_unconfirmed`。获得明确许可并完成原文权限核验前，不运行数据实验；当前没有真实模型的 precision、recall、F1、Average Precision、弃判率或失败案例。此前的 CrossNews-UA 规则结果与代码入口仍保留，不将合成句子当作模型在新闻数据上的评测。
