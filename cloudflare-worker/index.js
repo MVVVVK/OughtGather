@@ -49,13 +49,16 @@ async function dispatch(env) {
 
 function shanghaiDay(now) { return new Date(now.getTime() + 8 * 3600000).toISOString().slice(0, 10); }
 
-async function inspectPublication(env, now = new Date()) {
-  const day = shanghaiDay(now);
+async function inspectPublication(env, scheduled, checked) {
+  const day = shanghaiDay(scheduled);
   const start = Date.parse(`${day}T00:00:00+08:00`);
+  const end = start + 24 * 3600000;
   const payload = await github(env, 'actions/workflows/daily-gather.yml/runs?per_page=100', {}, true);
   if (!payload || !Array.isArray(payload.workflow_runs)) throw new SafeError('invalid_response');
-  const runs = payload.workflow_runs.filter(r => ['schedule', 'repository_dispatch', 'workflow_dispatch'].includes(r.event)
-    && Date.parse(r.created_at) >= start && Date.parse(r.created_at) <= now.getTime())
+  const runs = payload.workflow_runs.filter(r => r.head_branch === 'main'
+    && ['schedule', 'repository_dispatch', 'workflow_dispatch'].includes(r.event)
+    && Date.parse(r.created_at) >= start && Date.parse(r.created_at) < end
+    && Date.parse(r.created_at) <= checked.getTime())
     .sort((a, b) => Date.parse(b.created_at) - Date.parse(a.created_at));
   if (!runs.length) return { day, status: 'not_started' };
   let foundReal = false, pending = false, failure = 'status_unavailable';
@@ -99,11 +102,11 @@ async function alert(env, result) {
   } finally { clearTimeout(timer); }
 }
 
-async function monitor(env, now) {
+async function monitor(env, scheduled, checked) {
   let result;
-  try { result = await inspectPublication(env, now); }
-  catch (e) { result = { day: shanghaiDay(now), status: 'monitor_error', category: e instanceof SafeError ? e.category : 'unknown' }; }
-  log('monitor', result);
+  try { result = await inspectPublication(env, scheduled, checked); }
+  catch (e) { result = { day: shanghaiDay(scheduled), status: 'monitor_error', category: e instanceof SafeError ? e.category : 'unknown' }; }
+  log('monitor', { ...result, scheduled_time: scheduled.toISOString(), checked_time: checked.toISOString() });
   if (result.status !== 'delivered') {
     try { await alert(env, result); log('alert', { result: 'sent' }); }
     catch (e) { log('alert', { result: 'failed', category: e instanceof SafeError ? e.category : 'unknown' }); }
@@ -114,7 +117,7 @@ async function monitor(env, now) {
 export default {
   async scheduled(event, env, ctx) {
     if (event.cron === MONITOR_CRON) {
-      ctx.waitUntil(monitor(env, new Date(event.scheduledTime)));
+      ctx.waitUntil(monitor(env, new Date(event.scheduledTime), new Date()));
     } else if (event.cron === DISPATCH_CRON) {
       if (!env.SCHEDULER_MODE || env.SCHEDULER_MODE === 'dry_run') {
         log('dispatch', { result: 'dry_run' });

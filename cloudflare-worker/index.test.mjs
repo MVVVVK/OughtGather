@@ -91,11 +91,18 @@ test("does not expose GitHub error details", async () => {
   }
 });
 
-async function fireScheduled(cron, eventTime, environment = env) {
+async function fireScheduled(cron, eventTime, environment = env, checkedTime = eventTime) {
   let promise;
-  await worker.scheduled({ cron, scheduledTime: Date.parse(eventTime) }, environment,
-    { waitUntil(p) { promise = p; } });
-  if (promise) await promise;
+  const RealDate = globalThis.Date;
+  globalThis.Date = class extends RealDate {
+    constructor(...args) { super(...(args.length ? args : [checkedTime])); }
+    static now() { return RealDate.parse(checkedTime); }
+  };
+  try {
+    await worker.scheduled({ cron, scheduledTime: RealDate.parse(eventTime) }, environment,
+      { waitUntil(p) { promise = p; } });
+    if (promise) await promise;
+  } finally { globalThis.Date = RealDate; }
 }
 
 test('scheduled dispatch uses the existing event type', async () => {
@@ -147,17 +154,22 @@ test('scheduled missing configuration reports only category', async () => {
   } finally { console.log = original; }
 });
 
-function monitorFetch({ runs, steps = [], alertStatus = 204 }) {
+function monitorFetch({ runs, steps = [], stepsByRun = {}, alertStatus = 204 }) {
   const alerts = [];
-  return { alerts, fetch: async (url, opts = {}) => {
+  const jobRequests = [];
+  return { alerts, jobRequests, fetch: async (url, opts = {}) => {
     if (String(url).includes('/workflows/daily-gather.yml/runs')) return Response.json({ workflow_runs: runs });
-    if (String(url).includes('/actions/runs/')) return Response.json({ jobs: [{ name: 'gather', steps: steps.map(name => ({ name, conclusion: 'success' })) }] });
+    if (String(url).includes('/actions/runs/')) {
+      const id = String(url).match(/\/actions\/runs\/(\d+)\//)[1];
+      jobRequests.push(id);
+      return Response.json({ jobs: [{ name: 'gather', steps: (stepsByRun[id] || steps).map(name => ({ name, conclusion: 'success' })) }] });
+    }
     if (String(url).startsWith('https://alerts.example/')) { alerts.push(JSON.parse(opts.body)); return new Response(null, { status: alertStatus }); }
     throw new Error('unexpected request');
   }};
 }
 
-const runToday = { id: 123, event: 'repository_dispatch', created_at: '2026-11-23T22:31:00Z', status: 'completed' };
+const runToday = { id: 123, head_branch: 'main', event: 'repository_dispatch', created_at: '2026-11-23T22:31:00Z', status: 'completed' };
 for (const [name, runs, steps, expected] of [
   ['no run', [], [], 'not_started'],
   ['EPUB missing', [runToday], ['Health: EPUB missing'], 'epub_missing'],
@@ -218,5 +230,79 @@ test('monitor excludes yesterday and recognizes a still running publication', as
   try {
     await fireScheduled('0 23 * * *', '2026-11-23T23:00:00Z', { ...env, ALERT_WEBHOOK_URL: 'https://alerts.example/hook' });
     assert.equal(mock.alerts[0].status, 'running');
+  } finally { globalThis.fetch = original; }
+});
+
+test('non-main and missing branch runs never count as production delivery', async () => {
+  const original = globalThis.fetch;
+  const runs = [
+    { ...runToday, id: 124, head_branch: 'feature', event: 'workflow_dispatch' },
+    { ...runToday, id: 125, head_branch: undefined },
+  ];
+  const mock = monitorFetch({ runs, steps: ['Health: WebDAV delivered'] }); globalThis.fetch = mock.fetch;
+  try {
+    await fireScheduled('0 23 * * *', '2026-11-23T23:00:00Z', { ...env, ALERT_WEBHOOK_URL: 'https://alerts.example/hook' });
+    assert.equal(mock.alerts[0].status, 'not_started');
+    assert.deepEqual(mock.jobRequests, []);
+  } finally { globalThis.fetch = original; }
+});
+
+test('a successful feature run cannot hide a failed main run', async () => {
+  const original = globalThis.fetch;
+  const runs = [runToday, { ...runToday, id: 124, head_branch: 'feature', event: 'workflow_dispatch', created_at: '2026-11-23T22:40:00Z' }];
+  const mock = monitorFetch({ runs, stepsByRun: { 123: ['Health: WebDAV failed'], 124: ['Health: WebDAV delivered'] } });
+  globalThis.fetch = mock.fetch;
+  try {
+    await fireScheduled('0 23 * * *', '2026-11-23T23:00:00Z', { ...env, ALERT_WEBHOOK_URL: 'https://alerts.example/hook' });
+    assert.equal(mock.alerts[0].status, 'webdav_failed');
+    assert.deepEqual(mock.jobRequests, ['123']);
+  } finally { globalThis.fetch = original; }
+});
+
+test('main delivery is recognized among unrelated branch and test runs', async () => {
+  const original = globalThis.fetch;
+  const runs = [runToday, { ...runToday, id: 124, head_branch: 'feature' },
+    { ...runToday, id: 125, event: 'workflow_dispatch', created_at: '2026-11-23T22:50:00Z' }];
+  const mock = monitorFetch({ runs, stepsByRun: { 123: ['Health: WebDAV delivered'], 125: ['Health: test only'] } });
+  globalThis.fetch = mock.fetch;
+  try {
+    await fireScheduled('0 23 * * *', '2026-11-23T23:00:00Z', { ...env, ALERT_WEBHOOK_URL: 'https://alerts.example/hook' });
+    assert.equal(mock.alerts.length, 0);
+    assert.deepEqual(mock.jobRequests, ['125', '123']);
+  } finally { globalThis.fetch = original; }
+});
+
+for (const [status, steps, expected] of [
+  ['completed', ['Health: WebDAV delivered'], 'delivered'],
+  ['in_progress', [], 'running'],
+]) {
+  test(`delayed monitor observes a publication ${status} after scheduled time`, async () => {
+    const original = globalThis.fetch, origLog = console.log, logs = [];
+    const runs = [{ ...runToday, status, created_at: '2026-11-23T23:05:00Z' },
+      { ...runToday, id: 124, created_at: '2026-11-23T23:11:00Z' }];
+    const mock = monitorFetch({ runs, steps }); globalThis.fetch = mock.fetch;
+    console.log = entry => logs.push(JSON.parse(entry));
+    try {
+      await fireScheduled('0 23 * * *', '2026-11-23T23:00:00Z',
+        { ...env, ALERT_WEBHOOK_URL: 'https://alerts.example/hook' }, '2026-11-23T23:10:00Z');
+      const record = logs.find(entry => entry.event === 'monitor');
+      assert.equal(record.status, expected);
+      assert.equal(record.scheduled_time, '2026-11-23T23:00:00.000Z');
+      assert.equal(record.checked_time, '2026-11-23T23:10:00.000Z');
+      assert.deepEqual(mock.jobRequests, ['123']);
+    } finally { globalThis.fetch = original; console.log = origLog; }
+  });
+}
+
+test('delay across midnight still checks the scheduled publication day', async () => {
+  const original = globalThis.fetch;
+  const runs = [{ ...runToday, created_at: '2026-11-23T23:05:00Z' },
+    { ...runToday, id: 124, created_at: '2026-11-24T16:01:00Z' }];
+  const mock = monitorFetch({ runs, steps: ['Health: WebDAV delivered'] }); globalThis.fetch = mock.fetch;
+  try {
+    await fireScheduled('0 23 * * *', '2026-11-23T23:00:00Z',
+      { ...env, ALERT_WEBHOOK_URL: 'https://alerts.example/hook' }, '2026-11-24T16:05:00Z');
+    assert.equal(mock.alerts.length, 0);
+    assert.deepEqual(mock.jobRequests, ['123']);
   } finally { globalThis.fetch = original; }
 });
