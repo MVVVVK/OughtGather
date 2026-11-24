@@ -2,7 +2,7 @@
   "run_id": 45301867050,
   "job_id": 138136093847,
   "step": "Inspect bounded public RSS titles",
-  "scope": "Only public RSS whitelist; first 20 feed entries; title evidence not full text; URLs stripped of query and fragment; not representative.",
+  "scope": "Only public RSS whitelist; first 20 feed entries; title evidence not full text; URLs stripped of query and fragment; not representative. feed_position is the one-based position among eligible entries returned from the first 20, not necessarily the raw RSS entry index.",
   "cases": [
     {
       "id": "bbc_same",
