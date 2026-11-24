@@ -1,0 +1,214 @@
+{
+  "run_id": 45301867050,
+  "job_id": 138136093847,
+  "step": "Inspect bounded public RSS titles",
+  "scope": "Only public RSS whitelist; first 20 feed entries; title evidence not full text; URLs stripped of query and fragment; not representative.",
+  "cases": [
+    {
+      "id": "bbc_same",
+      "category": "normalized_url_equal",
+      "evidence": [
+        {
+          "source": "BBC World",
+          "public_feed_url": "https://feeds.bbci.co.uk/news/world/rss.xml",
+          "feed_position": 2,
+          "public_article_url": "https://www.bbc.co.uk/news/articles/cr894gjz0j0yo",
+          "observed_at": "2026-11-24T01:02:25.6004703Z"
+        },
+        {
+          "source": "BBC News — Africa",
+          "public_feed_url": "https://feeds.bbci.co.uk/news/world/africa/rss.xml",
+          "feed_position": 3,
+          "public_article_url": "https://www.bbc.co.uk/news/articles/cr894gjz0j0yo",
+          "observed_at": "2026-11-24T01:02:26.2705934Z"
+        }
+      ]
+    },
+    {
+      "id": "lemonde_same",
+      "category": "normalized_url_equal",
+      "evidence": [
+        {
+          "source": "Le Monde — Justice",
+          "public_feed_url": "https://www.lemonde.fr/justice/rss_full.xml",
+          "feed_position": 18,
+          "public_article_url": "https://www.lemonde.fr/les-decodeurs/article/2026/11/20/pesticides-des-parents-d-eleves-somment-l-etat-d-elargir-le-perimetre-de-non-traitement-autour-des-ecoles_6813595_4355770.html",
+          "observed_at": "2026-11-24T01:02:27.7347577Z"
+        },
+        {
+          "source": "Le Monde — Les Décodeurs",
+          "public_feed_url": "https://www.lemonde.fr/les-decodeurs/rss_full.xml",
+          "feed_position": 4,
+          "public_article_url": "https://www.lemonde.fr/les-decodeurs/article/2026/11/20/pesticides-des-parents-d-eleves-somment-l-etat-d-elargir-le-perimetre-de-non-traitement-autour-des-ecoles_6813595_4355770.html",
+          "observed_at": "2026-11-24T01:02:27.7469169Z"
+        }
+      ]
+    },
+    {
+      "id": "guardian_same",
+      "category": "normalized_url_equal",
+      "evidence": [
+        {
+          "source": "The Guardian Business",
+          "public_feed_url": "https://www.theguardian.com/uk/business/rss",
+          "feed_position": 1,
+          "public_article_url": "https://www.theguardian.com/technology/2026/nov/23/jensen-huang-reinstated-as-nvidia-chief-executive",
+          "observed_at": "2026-11-24T01:02:26.4619037Z"
+        },
+        {
+          "source": "The Guardian Technology",
+          "public_feed_url": "https://www.theguardian.com/uk/technology/rss",
+          "feed_position": 1,
+          "public_article_url": "https://www.theguardian.com/technology/2026/nov/23/jensen-huang-reinstated-as-nvidia-chief-executive",
+          "observed_at": "2026-11-24T01:02:26.4652838Z"
+        }
+      ]
+    },
+    {
+      "id": "rfi_same",
+      "category": "normalized_url_equal",
+      "evidence": [
+        {
+          "source": "RFI Français",
+          "public_feed_url": "https://www.rfi.fr/fr/rss",
+          "feed_position": 1,
+          "public_article_url": "https://www.rfi.fr/fr/europe/20261123-direct-l-ukraine-dit-avoir-attaqu%C3%A9-deux-bateaux-russes-pr%C3%A8s-des-c%C3%B4tes-de-la-libye",
+          "observed_at": "2026-11-24T01:02:27.0136870Z"
+        },
+        {
+          "source": "RFI — Afrique",
+          "public_feed_url": "https://www.rfi.fr/fr/afrique/rss",
+          "feed_position": 1,
+          "public_article_url": "https://www.rfi.fr/fr/europe/20261123-direct-l-ukraine-dit-avoir-attaqu%C3%A9-deux-bateaux-russes-pr%C3%A8s-des-c%C3%B4tes-de-la-libye",
+          "observed_at": "2026-11-24T01:02:27.5639335Z"
+        }
+      ]
+    },
+    {
+      "id": "senegal_similarity",
+      "category": "headline_similarity",
+      "semantic_status": "probable_same_story_content_unverified",
+      "evidence": [
+        {
+          "source": "France 24 — Africa (EN)",
+          "public_feed_url": "https://www.france24.com/en/africa/rss",
+          "feed_position": 11,
+          "public_article_url": "https://www.france24.com/en/senegal-pastef-removes-president-faye-from-its-ranks",
+          "observed_at": "2026-11-24T01:02:26.2723351Z"
+        },
+        {
+          "source": "France 24 — Africa (EN)",
+          "public_feed_url": "https://www.france24.com/en/africa/rss",
+          "feed_position": 12,
+          "public_article_url": "https://www.france24.com/en/bassirou-diomaye-faye-excluded-from-senegal-s-ruling-party",
+          "observed_at": "2026-11-24T01:02:26.2723351Z"
+        }
+      ]
+    },
+    {
+      "id": "iran_cross_language",
+      "category": "headline_semantic_match",
+      "semantic_status": "probable_same_story_content_unverified",
+      "evidence": [
+        {
+          "source": "France 24 English",
+          "public_feed_url": "https://www.france24.com/en/rss",
+          "feed_position": 18,
+          "public_article_url": "https://www.france24.com/en/iran-s-courts-order-us-to-pay-290-billion-in-damages",
+          "observed_at": "2026-11-24T01:02:26.2687912Z"
+        },
+        {
+          "source": "France 24 — Moyen-Orient",
+          "public_feed_url": "https://www.france24.com/fr/moyen-orient/rss",
+          "feed_position": 1,
+          "public_article_url": "https://www.france24.com/fr/moyen-orient/20261123-t%C3%A9h%C3%A9ran-r%C3%A9clame-290-milliards-dollars-d%C3%A9dommagements-washington-guerre",
+          "observed_at": "2026-11-24T01:02:27.5675649Z"
+        }
+      ]
+    },
+    {
+      "id": "benghazi_format",
+      "category": "headline_semantic_match",
+      "semantic_status": "same_story_increment_unverified",
+      "evidence": [
+        {
+          "source": "France 24 — Africa (EN)",
+          "public_feed_url": "https://www.france24.com/en/africa/rss",
+          "feed_position": 4,
+          "public_article_url": "https://www.france24.com/en/africa/20261122-russian-warship-hit-by-suspected-ukrainian-drone-at-libya-s-benghazi-naval-base",
+          "observed_at": "2026-11-24T01:02:26.2723351Z"
+        },
+        {
+          "source": "France 24 English",
+          "public_feed_url": "https://www.france24.com/en/rss",
+          "feed_position": 10,
+          "public_article_url": "https://www.france24.com/en/tv-shows/the-debate/20261123-how-far-will-ukraine-war-spread-kyiv-targets-russian-vessels-in-libya",
+          "observed_at": "2026-11-24T01:02:26.2687912Z"
+        }
+      ]
+    },
+    {
+      "id": "guardian_opinion",
+      "category": "same_story_different_editorial_format",
+      "semantic_status": "editorial_type_verified_factual_increment_unverified",
+      "evidence": [
+        {
+          "source": "The Guardian Business",
+          "public_feed_url": "https://www.theguardian.com/uk/business/rss",
+          "feed_position": 1,
+          "public_article_url": "https://www.theguardian.com/technology/2026/nov/23/jensen-huang-reinstated-as-nvidia-chief-executive",
+          "observed_at": "2026-11-24T01:02:26.4619037Z"
+        },
+        {
+          "source": "The Guardian Business",
+          "public_feed_url": "https://www.theguardian.com/uk/business/rss",
+          "feed_position": 10,
+          "public_article_url": "https://www.theguardian.com/technology/nils-pratley-on-finance/2026/nov/23/nvidia-board-jensen-huang-return",
+          "observed_at": "2026-11-24T01:02:26.4619037Z"
+        }
+      ]
+    },
+    {
+      "id": "rfi_angle",
+      "category": "same_story_possible_distinct_angle",
+      "semantic_status": "information_gain_unverified",
+      "evidence": [
+        {
+          "source": "RFI Français",
+          "public_feed_url": "https://www.rfi.fr/fr/rss",
+          "feed_position": 1,
+          "public_article_url": "https://www.rfi.fr/fr/europe/20261123-direct-l-ukraine-dit-avoir-attaqu%C3%A9-deux-bateaux-russes-pr%C3%A8s-des-c%C3%B4tes-de-la-libye",
+          "observed_at": "2026-11-24T01:02:27.0136870Z"
+        },
+        {
+          "source": "RFI — Afrique",
+          "public_feed_url": "https://www.rfi.fr/fr/afrique/rss",
+          "feed_position": 5,
+          "public_article_url": "https://www.rfi.fr/fr/afrique/20261123-l-attaque-ukrainienne-en-large-de-benghazi-ravive-la-tension-entre-les-bellig%C3%A9rants-libyens",
+          "observed_at": "2026-11-24T01:02:27.5639335Z"
+        }
+      ]
+    },
+    {
+      "id": "guardian_distinct",
+      "category": "different_entities_and_events",
+      "semantic_status": "headline_level_distinct",
+      "evidence": [
+        {
+          "source": "The Guardian World",
+          "public_feed_url": "https://www.theguardian.com/world/rss",
+          "feed_position": 1,
+          "public_article_url": "https://www.theguardian.com/world/2026/nov/23/ukraine-naval-drones-strike-russian-warship-libya",
+          "observed_at": "2026-11-24T01:02:25.6035580Z"
+        },
+        {
+          "source": "The Guardian Business",
+          "public_feed_url": "https://www.theguardian.com/uk/business/rss",
+          "feed_position": 2,
+          "public_article_url": "https://www.theguardian.com/business/2026/nov/23/next-issues-cyber-attack-warning-after-benign-data-accessed-by-hackers",
+          "observed_at": "2026-11-24T01:02:26.4619037Z"
+        }
+      ]
+    }
+  ]
+}

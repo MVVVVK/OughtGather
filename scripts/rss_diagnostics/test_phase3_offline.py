@@ -52,7 +52,8 @@ def test_anonymization_and_source_count_reconciliation():
         "traditional_selected": ["private-candidate"],
     }
     result = phase.summarize_production(raw, ai, 123)
-    assert result["sources"][0]["source_id"] == "F01"
+    assert result["source_count"] == 1
+    assert "sources" not in result and result["per_source_rows_exported"] is False
     assert result["totals"]["rss_returned"] == 10
     assert result["quality_unattempted"] == 3
     assert result["candidate_count_matches_source_totals"] is True
@@ -75,6 +76,8 @@ def test_audit_does_not_infer_production_cap_effect_from_public_feed():
     assert sample["production"]["quality_unattempted"] == 2
     assert sample["production"]["ai"]["skipped_candidate_cap"] == 0
     assert sample["evidence"]["semantic_and_cross_language_overlap"] == "unverified"
+    assert sample["evidence"]["public_snapshot_count"] == 1
+    assert sample["evidence"]["event_level_manual_verification"] == "unverified"
     assert "secret.invalid" not in str(sample)
 
 
@@ -83,7 +86,17 @@ def test_missing_source_counters_remain_unknown():
         [{"rss_returned": 4, "candidates": None}],
         {"candidate_count": 4, "ai_recommended": []}, 99,
     )
-    assert result["sources"][0]["candidates"] is None
     assert result["totals"]["candidates"] is None
     assert result["candidate_count_matches_source_totals"] is None
     assert result["totals"]["failed"] is None
+
+
+def test_distinct_source_fingerprints_are_never_exported():
+    rows = [
+        {"rss_returned": 11, "historical_dedup": 8, "candidates": 3},
+        {"rss_returned": 47, "historical_dedup": 10, "candidates": 37},
+    ]
+    report = phase.summarize_production(rows, {"candidate_count": 40}, 1)
+    assert report["source_count"] == 2
+    assert report["totals"]["rss_returned"] == 58
+    assert "sources" not in report and "F01" not in str(report) and "F02" not in str(report)

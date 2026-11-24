@@ -80,15 +80,14 @@ FIELDS = (
 
 
 def summarize_production(source_rows, ai_report, run_id):
-    """Never copy source, source_url, titles, article URLs, candidate IDs or groups."""
+    """Export aggregate totals only; per-source count fingerprints are linkable."""
     sources = []
-    for index, raw in enumerate(source_rows, start=1):
-        row = {"source_id": f"F{index:02d}"}
+    for raw in source_rows:
+        row = {}
         for field in FIELDS:
             value = raw.get(field)
             # Missing counters are unknown, not evidence of zero activity.
             row[field] = value if type(value) is int and value >= 0 else None
-        row["status"] = "success" if raw.get("status") == "success" else "other"
         sources.append(row)
     totals = {key: (sum(row[key] for row in sources)
                     if all(row[key] is not None for row in sources) else None)
@@ -99,8 +98,7 @@ def summarize_production(source_rows, ai_report, run_id):
     traditional = ai_report.get("traditional_selected") or []
     cap = ai_report.get("candidate_cap")
     return {
-        "run_id": str(run_id), "source_labels": "local to this run; not stable identities",
-        "sources": sources, "totals": totals,
+        "run_id": str(run_id), "source_count": len(sources), "totals": totals,
         "ai": {
             "mode": ai_report.get("mode"), "status": ai_report.get("status"),
             "candidate_count": ai_candidates, "candidate_cap": cap,
@@ -115,6 +113,7 @@ def summarize_production(source_rows, ai_report, run_id):
         "quality_unattempted": totals["quota_limited"],
         "quota_unattempted_is_not_quality_failure": True,
         "production_source_urls_exported": False,
+        "per_source_rows_exported": False,
     }
 
 
