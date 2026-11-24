@@ -2,7 +2,7 @@ name: Daily Gather
 
 on:
   schedule:
-    - cron: '30 22 * * *'  # 06:30 Asia/Shanghai (UTC+8)
+    - cron: '30 22 * * 0-6'  # 06:30 Asia/Shanghai (UTC+8), daily; re-register fork schedule
   workflow_dispatch:  # 支持手动触发
     inputs:
       test_mode:
